@@ -76,22 +76,7 @@ class LatencyBenchmarkGenerator:
     SKIPPED INSTRUCTION CATEGORIES AND MEASUREMENT STRATEGIES
     ==========================================================================
 
-    1. JUMP INSTRUCTIONS (jal, jalr, c.j, c.jr, c.jal, c.jalr)
-       -------------------------------------------------------------------------
-       WHY SKIPPED:
-       - Jumps change control flow unconditionally
-       - jalr uses register as target, corrupting the chain
-       - Link register (ra) handling adds complexity
-
-       HOW TO MEASURE:
-       - Self-jumping pattern: Jump to next instruction
-         Example: "1: jal ra, 1f; 1: jal ra, 1f; ..." with careful label placement
-       - For jalr: Load address of next instruction into register
-       - Measure jump + return pairs together
-       - Use position-independent code with computed offsets
-       - Alternative: Measure in a loop with known iteration count
-
-    2. STORE INSTRUCTIONS (sb, sh, sw, c.sw, c.swsp)
+    1. STORE INSTRUCTIONS (sb, sh, sw, c.sw, c.swsp)
        -------------------------------------------------------------------------
        WHY SKIPPED:
        - Stores don't produce a register result for chaining
@@ -105,7 +90,7 @@ class LatencyBenchmarkGenerator:
        - Chain: store + load pairs where load depends on store
        - Example: "sw a0, 0(a1); lw a0, 0(a1)" measures forwarding latency
 
-    3. BYTE/HALF LOADS (lb, lbu, lh, lhu)
+    2. BYTE/HALF LOADS (lb, lbu, lh, lhu)
        -------------------------------------------------------------------------
        WHY SKIPPED:
        - Load only 1-2 bytes, which is not a valid 32-bit address
@@ -120,7 +105,7 @@ class LatencyBenchmarkGenerator:
        - Measure throughput instead of latency (independent loads)
        - Use indexed addressing with base address restoration
 
-    4. STACK POINTER INSTRUCTIONS (c.addi16sp, c.addi4spn, c.lwsp, c.swsp)
+    3. STACK POINTER INSTRUCTIONS (c.addi16sp, c.addi4spn, c.lwsp, c.swsp)
        -------------------------------------------------------------------------
        WHY SKIPPED:
        - Modify or depend on stack pointer (sp)
@@ -134,7 +119,7 @@ class LatencyBenchmarkGenerator:
        - Measure equivalent non-sp instructions as proxy
        - Example: Save sp to s0, run benchmark, restore sp from s0
 
-    5. ZERO REGISTER HINTS (c.add zero, c.li zero, c.mv zero, c.slli zero)
+    4. ZERO REGISTER HINTS (c.add zero, c.li zero, c.mv zero, c.slli zero)
        -------------------------------------------------------------------------
        WHY SKIPPED:
        - Write to x0 (zero) register which is hardwired to 0
@@ -147,7 +132,7 @@ class LatencyBenchmarkGenerator:
        - Check if they consume execution resources
        - Use performance counters to verify execution
 
-    6. SYSTEM INSTRUCTIONS (ecall, ebreak, mret, sret, wfi, fence, csr*)
+    5. SYSTEM INSTRUCTIONS (ecall, ebreak, mret, sret, wfi, fence, csr*)
        -------------------------------------------------------------------------
        WHY SKIPPED:
        - ecall/ebreak: Trigger exceptions/traps
@@ -163,7 +148,7 @@ class LatencyBenchmarkGenerator:
        - CSR access: Use only user-accessible CSRs (cycle, time, instret)
        - Run in machine mode or set up proper privilege levels
 
-    7. GENERIC INSTRUCTION ENCODINGS (.insn)
+    6. GENERIC INSTRUCTION ENCODINGS (.insn)
        -------------------------------------------------------------------------
        WHY SKIPPED:
        - .insn is a pseudo-instruction for custom encodings
@@ -441,14 +426,69 @@ class LatencyBenchmarkGenerator:
         """
         Generate measurement for jump instructions.
 
-        SKIPPED - Jumps change control flow unconditionally.
+        Strategy: Create jumps that target the next instruction to measure
+        minimal jump latency without pipeline flush penalties.
 
-        See class docstring for measurement strategies:
-        - Self-jumping pattern to next instruction
-        - Measure jump+return pairs together
-        - Use computed offsets for position-independent measurement
+        For direct jumps (JAL, C.J, C.JAL):
+        - Use forward label reference "1f" to jump to next instruction
+        - Place label "1:" immediately after the jump
+
+        For register-indirect jumps (JALR, C.JR, C.JALR):
+        - SKIPPED: Require computed addresses that are difficult to get right
+        - The last iteration would jump outside the asm block
+        - Would need special handling for chain termination
+
+        Note: We use rd=zero where possible to measure pure jump latency
+        without the link register write overhead.
         """
-        return None
+        asm = instr.test_asm.lower()
+
+        # Extract the mnemonic
+        parts = asm.split()
+        if not parts:
+            return None
+
+        mnemonic = parts[0]
+
+        chain_lines = []
+
+        if mnemonic == "jal":
+            # JAL rd, offset -> jal zero, 1f (no link save, jump forward)
+            for i in range(self.config.chain_length):
+                chain_lines.append('        "jal zero, 1f\\n"')
+                chain_lines.append('        "1:\\n"')
+
+        elif mnemonic == "jalr":
+            # SKIPPED: Register-indirect jump with computed address
+            # Difficult to terminate chain safely
+            return None
+
+        elif mnemonic == "c.j":
+            # C.J offset -> c.j 1f (jump forward)
+            for i in range(self.config.chain_length):
+                chain_lines.append('        "c.j 1f\\n"')
+                chain_lines.append('        "1:\\n"')
+
+        elif mnemonic == "c.jal":
+            # C.JAL offset -> c.jal 1f (jump forward, saves ra)
+            for i in range(self.config.chain_length):
+                chain_lines.append('        "c.jal 1f\\n"')
+                chain_lines.append('        "1:\\n"')
+
+        elif mnemonic == "c.jr":
+            # SKIPPED: Register-indirect jump
+            # Would need computed address, last iteration jumps outside asm block
+            return None
+
+        elif mnemonic == "c.jalr":
+            # SKIPPED: Register-indirect jump with link
+            # Would need computed address, last iteration jumps outside asm block
+            return None
+
+        else:
+            return None
+
+        return "\n".join(chain_lines)
 
     def _gen_atomic_chain(self, instr: Instruction) -> Optional[str]:
         """

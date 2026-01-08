@@ -110,15 +110,102 @@ add a0, a0, a0   ; Cycle 3
 
 ## Results Summary (ESP32-C6 @ 160MHz)
 
+**97 benchmarks executed successfully**
+
 | Category | Instructions | Latency (cycles) |
 |----------|-------------|------------------|
-| Basic ALU | ADD, SUB, AND, OR, XOR, SLT, shifts | 1 |
-| Compressed ALU | C.ADD, C.SUB, C.AND, etc. | 1 |
-| Multiply | MUL | 1 |
-| Multiply High | MULH, MULHSU, MULHU | 2 |
-| Division | DIV, DIVU, REM, REMU | 10 |
-| Sign/Zero Extend | SEXT.B, SEXT.H, ZEXT.H | 2 |
-| Word Load | LW, C.LW | 3 |
+| **Arithmetic** | ADD, ADDI, SUB, AND, ANDI, OR, ORI, XOR, XORI, SLT, SLTI, SLTIU, SLTU | 1 |
+| **Shifts** | SLL, SLLI, SRA, SRAI, SRL, SRLI | 1 |
+| **Compressed ALU** | C.ADD, C.ADDI, C.AND, C.ANDI, C.OR, C.XOR, C.SUB, C.MV, C.LI, C.SLLI, C.SRAI, C.SRLI | 1 |
+| **Upper Immediate** | LUI, AUIPC | 1 |
+| **Multiply (low)** | MUL | 1 |
+| **Multiply (high)** | MULH, MULHSU, MULHU | 2 |
+| **Division** | DIV, DIVU, REM, REMU | 10 |
+| **Sign/Zero Extend** | SEXT.B, SEXT.H, ZEXT.H | 2 |
+| **Word Load** | LW, C.LW | 3 |
+| **Atomic (AMO)** | AMOADD.W, AMOSWAP.W, AMOAND.W, AMOOR.W, AMOXOR.W, AMOMAX.W, AMOMIN.W, etc. | 6 |
+| **Branch (not-taken)** | BEQ, BNE | 1 |
+| **Branch (not-taken)** | BGE, BGEU, BLT, BLTU, C.BEQZ, C.BNEZ | 3-4 |
+| **Jump (direct)** | C.J, C.JAL | 2 |
+| **Jump (direct)** | JAL | 3 |
+
+### Detailed Results
+
+<details>
+<summary>Click to expand full results table</summary>
+
+| Instruction | Assembly | Type | Avg Cycles |
+|-------------|----------|------|------------|
+| ADD | `add a0, a0, a0` | arithmetic | 1 |
+| ADDI | `addi a0, a0, 0` | arithmetic | 1 |
+| AMOADD_W | `amoadd.w a0, a0, (a0)` | atomic | 6 |
+| AMOAND_W | `amoand.w a0, a0, (a0)` | atomic | 6 |
+| AMOMAX_W | `amomax.w a0, a0, (a0)` | atomic | 6 |
+| AMOMAXU_W | `amomaxu.w a0, a0, (a0)` | atomic | 6 |
+| AMOMIN_W | `amomin.w a0, a0, (a0)` | atomic | 6 |
+| AMOMINU_W | `amominu.w a0, a0, (a0)` | atomic | 6 |
+| AMOOR_W | `amoor.w a0, a0, (a0)` | atomic | 6 |
+| AMOSWAP_W | `amoswap.w a0, a0, (a0)` | atomic | 6 |
+| AMOXOR_W | `amoxor.w a0, a0, (a0)` | atomic | 6 |
+| AND | `and a0, a0, a0` | arithmetic | 1 |
+| ANDI | `andi a0, a0, 0` | arithmetic | 1 |
+| AUIPC | `auipc a0, 0` | unknown | 1 |
+| BEQ | `beq a0, a0, 0` | branch | 1 |
+| BGE | `bge a0, a0, 0` | branch | 4 |
+| BGEU | `bgeu a0, a0, 0` | branch | 4 |
+| BLT | `blt a0, a0, 0` | branch | 4 |
+| BLTU | `bltu a0, a0, 0` | branch | 4 |
+| BNE | `bne a0, a0, 0` | branch | 1 |
+| C_ADD | `c.add a0, a0` | arithmetic | 1 |
+| C_ADDI | `c.addi a0, 1` | arithmetic | 1 |
+| C_AND | `c.and a0, a0` | arithmetic | 1 |
+| C_ANDI | `c.andi a0, 0` | arithmetic | 1 |
+| C_BEQZ | `c.beqz a0, 0` | branch | 3 |
+| C_BNEZ | `c.bnez a0, 0` | branch | 3 |
+| C_J | `c.j 0` | jump | 2 |
+| C_JAL | `c.jal 0` | jump | 2 |
+| C_LI | `c.li a0, 0` | arithmetic | 1 |
+| C_LW | `c.lw a0, 0(a0)` | load_store | 3 |
+| C_MV | `c.mv a0, a0` | arithmetic | 1 |
+| C_OR | `c.or a0, a0` | arithmetic | 1 |
+| C_SLLI | `c.slli a0, 1` | arithmetic | 1 |
+| C_SRAI | `c.srai a0, 1` | arithmetic | 1 |
+| C_SRLI | `c.srli a0, 1` | arithmetic | 1 |
+| C_SUB | `c.sub a0, a0` | arithmetic | 1 |
+| C_XOR | `c.xor a0, a0` | arithmetic | 1 |
+| DIV | `div a0, a0, a0` | multiply | 10 |
+| DIVU | `divu a0, a0, a0` | multiply | 10 |
+| JAL | `jal a0, 0` | jump | 3 |
+| LUI | `lui a0, 0` | unknown | 1 |
+| LW | `lw a0, 0(a0)` | load | 3 |
+| MUL | `mul a0, a0, a0` | multiply | 1 |
+| MULH | `mulh a0, a0, a0` | multiply | 2 |
+| MULHSU | `mulhsu a0, a0, a0` | multiply | 2 |
+| MULHU | `mulhu a0, a0, a0` | multiply | 2 |
+| OR | `or a0, a0, a0` | arithmetic | 1 |
+| ORI | `ori a0, a0, 0` | arithmetic | 1 |
+| REM | `rem a0, a0, a0` | multiply | 10 |
+| REMU | `remu a0, a0, a0` | multiply | 10 |
+| SEXT_B | `sext.b a0, a0` | unknown | 2 |
+| SEXT_H | `sext.h a0, a0` | unknown | 2 |
+| SLL | `sll a0, a0, a0` | arithmetic | 1 |
+| SLLI | `slli a0, a0, 1` | arithmetic | 1 |
+| SLT | `slt a0, a0, a0` | arithmetic | 1 |
+| SLTI | `slti a0, a0, 0` | arithmetic | 1 |
+| SLTIU | `sltiu a0, a0, 0` | arithmetic | 1 |
+| SLTU | `sltu a0, a0, a0` | arithmetic | 1 |
+| SRA | `sra a0, a0, a0` | arithmetic | 1 |
+| SRAI | `srai a0, a0, 1` | arithmetic | 1 |
+| SRL | `srl a0, a0, a0` | arithmetic | 1 |
+| SRLI | `srli a0, a0, 1` | arithmetic | 1 |
+| SUB | `sub a0, a0, a0` | arithmetic | 1 |
+| XOR | `xor a0, a0, a0` | arithmetic | 1 |
+| XORI | `xori a0, a0, 0` | arithmetic | 1 |
+| ZEXT_H | `zext.h a0, a0` | unknown | 2 |
+
+*Note: Atomic instructions with `.aq`, `.rl`, and `.aqrl` suffixes all measure 6 cycles.*
+
+</details>
 
 ## License
 
