@@ -5,7 +5,7 @@ This tool generates an exhaustive list of valid ESP32-C6 instructions for use in
 ## Prerequisites
 
 1.  **LLVM Build**: You need a local build of LLVM with `llvm-tblgen` and `llvm-mc` built.
-    *   Use the provided `config.sh` script to configure and build.
+    *   Use the provided `config.sh` script in the project root to configure and build.
     *   Ensure `riscv_defs.json` is generated (see below).
 2.  **Python 3.6+**: For running the extraction script.
 
@@ -13,25 +13,34 @@ This tool generates an exhaustive list of valid ESP32-C6 instructions for use in
 
 First, you need to dump the RISC-V instruction definitions from LLVM's TableGen files into a JSON format.
 
-You can use the helper command in `config.sh`:
+You can use the helper command in `config.sh` from the project root:
 
 ```bash
 ./config.sh genDefs
 ```
 
-This will run `llvm-tblgen` with the correct include paths and generate `riscv_defs.json` in the current directory.
+This will run `llvm-tblgen` with the correct include paths and generate `isa_extraction/output/riscv_defs.json`.
 
 ## Step 2: Run the Extraction Script
 
-Run the `extract_esp32_isa.py` script. It requires the path to `riscv_defs.json`.
+Run the `extract_esp32_isa.py` script from the project root. With defaults configured, you can simply run:
 
 ```bash
-python3 extract_esp32_isa.py riscv_defs.json -o esp32c6_instructions.json
+python3 isa_extraction/extract_esp32_isa.py
+```
+
+Or with explicit paths:
+
+```bash
+python3 isa_extraction/extract_esp32_isa.py \
+    isa_extraction/output/riscv_defs.json \
+    -o isa_extraction/output/esp32c6_instructions.json
 ```
 
 **Options:**
-*   `-o, --output`: Output JSON file path (default: `esp32c6_instructions.json`).
-*   `--llvm-mc`: Path to `llvm-mc` binary (default: `./build/bin/llvm-mc`).
+*   `input`: Path to riscv_defs.json (default: `output/riscv_defs.json`).
+*   `-o, --output`: Output JSON file path (default: `output/esp32c6_instructions.json`).
+*   `--llvm-mc`: Path to `llvm-mc` binary (default: `../build/bin/llvm-mc`).
 *   `-j, --jobs`: Number of parallel workers for validation (default: 8).
 *   `-v, --verbose`: Enable verbose output.
 

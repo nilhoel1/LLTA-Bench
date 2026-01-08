@@ -50,12 +50,13 @@ genDefs() {
     exit 1
   fi
   echo "Generating RISC-V definitions..."
+  mkdir -p isa_extraction/output
   ./build/bin/llvm-tblgen -dump-json \
     -I "${LLVM_PROJECT_DIR}/llvm/include" \
     -I "${LLVM_PROJECT_DIR}/llvm/lib/Target/RISCV" \
     "${LLVM_PROJECT_DIR}/llvm/lib/Target/RISCV/RISCV.td" \
-    > riscv_defs.json
-  echo "Instructions dumped to riscv_defs.json"
+    > isa_extraction/output/riscv_defs.json
+  echo "Instructions dumped to isa_extraction/output/riscv_defs.json"
 }
 
 conf() {
@@ -70,7 +71,6 @@ conf() {
     -S "${LLVM_PROJECT_DIR}/llvm" \
     -B build \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
     -DLLVM_TARGETS_TO_BUILD='RISCV' \
     -DLLVM_INCLUDE_BENCHMARKS=OFF \
     -DLLVM_INCLUDE_TESTS=OFF \
@@ -79,7 +79,6 @@ conf() {
     -DLLVM_ENABLE_PROJECTS='' \
     ${LINKER_OPTION} \
     -G"${BUILD_SYSTEM}"
-  cp build/compile_commands.json .
   echo "Configuration complete."
 }
 
@@ -106,7 +105,6 @@ build_all() {
 clean() {
   echo "Cleaning build artifacts..."
   rm -rf build
-  rm -f compile_commands.json
   echo "Clean complete."
 }
 

@@ -28,8 +28,11 @@ from typing import Any, Optional
 # Configuration
 # ============================================================================
 
-# Path to llvm-mc (relative to script or absolute)
-LLVM_MC_PATH = Path(__file__).parent / "build" / "bin" / "llvm-mc"
+# Path to llvm-mc (relative to project root)
+LLVM_MC_PATH = Path(__file__).parent.parent / "build" / "bin" / "llvm-mc"
+
+# Default output directory
+DEFAULT_OUTPUT_DIR = Path(__file__).parent / "output"
 
 # Target configuration for ESP32-C6 (RV32IMAC)
 TARGET_TRIPLE = "riscv32"
@@ -62,7 +65,7 @@ OPERAND_MAP = {
     "SR07": "s0",
     "AnyReg": "a0",
     "AnyRegC": "a0",
-    
+
     # Floating Point Registers (ESP32-C6 doesn't have FPU, but include for completeness)
     "FPR16": "fa0",
     "FPR16INX": "a0",  # Uses GPR when no FPU
@@ -78,7 +81,7 @@ OPERAND_MAP = {
     "GPRF32": "a0",
     "GPRF32C": "a0",
     "GPRF32NoX0": "a0",
-    
+
     # Vector Registers (ESP32-C6 doesn't have V extension)
     "VR": "v0",
     "VRM2": "v0",
@@ -90,7 +93,7 @@ OPERAND_MAP = {
     "VMV0": "v0",
     "VMaskOp": "v0",
     "VMaskCarryInOp": "v0",
-    
+
     # Signed Immediates
     "simm5": "0",
     "simm5_plus1": "1",
@@ -107,8 +110,8 @@ OPERAND_MAP = {
     "simm13_lsb0": "0",
     "simm21_lsb0_jal": "0",
     "simm26": "0",
-    
-    # Unsigned Immediates  
+
+    # Unsigned Immediates
     "uimm1": "0",
     "uimm2": "0",
     "uimm2_3": "0",
@@ -145,21 +148,21 @@ OPERAND_MAP = {
     "uimm64": "0",
     "uimmlog2xlen": "1",
     "uimmlog2xlennonzero": "1",
-    
+
     # CSR registers
     "csr_sysreg": "0",
     "sysreg": "0",
-    
+
     # Round mode
     "frmarg": "rne",
     "frm": "rne",
-    
+
     # AVL/VL for vector
     "AVL": "a0",
-    
+
     # Vendor-specific
     "CVrr": "a0",
-    
+
     # Misc
     "rnum": "0",
     "rlist": "{ra}",
@@ -176,30 +179,30 @@ LATENCY_PATTERNS = {
     r"^C_(ADD|SUB|AND|OR|XOR|SLLI|SRLI|SRAI)": "arithmetic",
     r"^(ADDI|SLTI|SLTIU|XORI|ORI|ANDI|SLLI|SRLI|SRAI)": "arithmetic",
     r"^C_(ADDI|LI|LUI|MV)": "arithmetic",
-    
+
     # Multiply/Divide
     r"^(MUL|MULH|MULHSU|MULHU|DIV|DIVU|REM|REMU)": "multiply",
-    
+
     # Load/Store
     r"^(LB|LH|LW|LD|LBU|LHU|LWU)": "load",
-    r"^(SB|SH|SW|SD)": "store", 
+    r"^(SB|SH|SW|SD)": "store",
     r"^C_(LW|SW|LD|SD|LWSP|SWSP|LDSP|SDSP)": "load_store",
-    
+
     # Branch
     r"^(BEQ|BNE|BLT|BGE|BLTU|BGEU)": "branch",
     r"^C_(BEQZ|BNEZ)": "branch",
-    
+
     # Jump
     r"^(JAL|JALR)": "jump",
     r"^C_(J|JR|JALR)": "jump",
-    
+
     # Atomic
     r"^(LR|SC|AMO)": "atomic",
     r"^AMO": "atomic",
-    
+
     # System
     r"^(ECALL|EBREAK|FENCE|CSR|MRET|SRET|WFI)": "system",
-    
+
     # Bit manipulation
     r"^(CLZ|CTZ|CPOP|ANDN|ORN|XNOR|MIN|MAX|ROL|ROR|BSET|BCLR|BINV|BEXT)": "bitmanip",
 }
@@ -216,7 +219,7 @@ class Instruction:
     superclasses: list[str] = field(default_factory=list)
 
 
-@dataclass 
+@dataclass
 class ValidInstruction:
     """A validated instruction ready for output."""
     llvm_enum_name: str
@@ -233,45 +236,45 @@ def parse_operand_list(op_list: dict[str, Any]) -> list[tuple[str, str]]:
     """Parse an InOperandList or OutOperandList into (type, name) tuples."""
     result = []
     args = op_list.get("args", [])
-    
+
     for arg in args:
         if isinstance(arg, list) and len(arg) >= 2:
             op_def = arg[0]
             op_name = arg[1]
-            
+
             if isinstance(op_def, dict):
                 op_type = op_def.get("printable", "unknown")
             else:
                 op_type = str(op_def)
-            
+
             result.append((op_type, op_name))
-    
+
     return result
 
 
 def load_instructions(json_path: Path) -> list[Instruction]:
     """Load and parse instructions from TableGen JSON dump."""
     print(f"Loading {json_path}...")
-    
+
     with open(json_path, "r") as f:
         data = json.load(f)
-    
+
     instructions = []
-    
+
     for name, record in data.items():
         if not isinstance(record, dict):
             continue
-        
+
         superclasses = record.get("!superclasses", [])
         if "Instruction" not in superclasses:
             continue
-        
+
         asm_string = record.get("AsmString", "")
         is_pseudo = bool(record.get("isPseudo", 0))
-        
+
         in_operands = parse_operand_list(record.get("InOperandList", {}))
         out_operands = parse_operand_list(record.get("OutOperandList", {}))
-        
+
         instr = Instruction(
             llvm_enum_name=name,
             asm_string=asm_string,
@@ -281,7 +284,7 @@ def load_instructions(json_path: Path) -> list[Instruction]:
             superclasses=superclasses,
         )
         instructions.append(instr)
-    
+
     print(f"Loaded {len(instructions)} instruction records")
     return instructions
 
@@ -295,12 +298,12 @@ def get_operand_value(op_type: str) -> Optional[str]:
     # Direct lookup
     if op_type in OPERAND_MAP:
         return OPERAND_MAP[op_type]
-    
+
     # Try prefix matching for variants
     for key, value in OPERAND_MAP.items():
         if op_type.startswith(key):
             return value
-    
+
     # Handle some common patterns
     if "GPR" in op_type:
         return "a0"
@@ -314,24 +317,24 @@ def get_operand_value(op_type: str) -> Optional[str]:
         return "1"
     if "imm" in op_type.lower():
         return "0"
-        
+
     return None
 
 
 def generate_assembly(instr: Instruction) -> list[str]:
     """
     Generate test assembly strings for an instruction.
-    
+
     Returns multiple variants for memory operations to handle
     different assembly syntaxes (op rd, rs1, imm vs op rd, imm(rs1)).
     """
     asm_template = instr.asm_string
     if not asm_template:
         return []
-    
+
     # Collect all operands (outputs first, then inputs, matching AsmString order)
     all_operands = instr.out_operands + instr.in_operands
-    
+
     # Build substitution map
     operand_values = {}
     for op_type, op_name in all_operands:
@@ -340,26 +343,26 @@ def generate_assembly(instr: Instruction) -> list[str]:
             # Unknown operand type - can't generate assembly
             return []
         operand_values[op_name] = value
-    
+
     # Substitute operands in template
     result = asm_template
-    
+
     # Handle ${name} format first
     for name, value in operand_values.items():
         result = result.replace(f"${{{name}}}", value)
-    
+
     # Handle $name format
     for name, value in operand_values.items():
         result = result.replace(f"${name}", value)
-    
+
     # Clean up any remaining tab/whitespace issues
     result = re.sub(r'\s+', ' ', result).strip()
-    
+
     # Check if all substitutions were made
     if '$' in result:
         # Still has unsubstituted variables
         return []
-    
+
     return [result]
 
 
@@ -392,18 +395,18 @@ def validate_assembly(asm: str, llvm_mc_path: Path) -> bool:
 def validate_instruction(args: tuple[str, str, str]) -> Optional[tuple[str, str]]:
     """
     Validate a single instruction. Used for multiprocessing.
-    
+
     Args:
         args: (llvm_enum_name, test_asm, llvm_mc_path)
-    
+
     Returns:
         (llvm_enum_name, test_asm) if valid, None otherwise
     """
     llvm_enum_name, test_asm, llvm_mc_path = args
-    
+
     if validate_assembly(test_asm, Path(llvm_mc_path)):
         return (llvm_enum_name, test_asm)
-    
+
     return None
 
 
@@ -416,7 +419,7 @@ def infer_latency_type(instr_name: str, superclasses: list[str]) -> str:
     for pattern, latency_type in LATENCY_PATTERNS.items():
         if re.match(pattern, instr_name):
             return latency_type
-    
+
     # Check superclasses for hints
     superclass_str = " ".join(superclasses)
     if "Load" in superclass_str or "LD" in superclass_str:
@@ -433,7 +436,7 @@ def infer_latency_type(instr_name: str, superclasses: list[str]) -> str:
         return "multiply"
     if "DIV" in superclass_str:
         return "divide"
-    
+
     return "unknown"
 
 
@@ -445,23 +448,23 @@ def filter_instructions(instructions: list[Instruction]) -> list[Instruction]:
     """Filter out pseudo and vendor-specific instructions."""
     # Vendor prefixes to skip
     vendor_prefixes = ["QC_", "TH_", "CV_", "SF_", "XCV", "XTH", "XSF"]
-    
+
     filtered = []
     for instr in instructions:
         # Skip pseudo instructions
         if instr.is_pseudo:
             continue
-        
+
         # Skip vendor-specific
         if any(instr.llvm_enum_name.startswith(prefix) for prefix in vendor_prefixes):
             continue
-        
+
         # Skip instructions without assembly string
         if not instr.asm_string:
             continue
-        
+
         filtered.append(instr)
-    
+
     return filtered
 
 
@@ -480,29 +483,29 @@ def process_instructions(
         asm_variants = generate_assembly(instr)
         for asm in asm_variants:
             candidates.append((instr.llvm_enum_name, asm, str(llvm_mc_path), instr.superclasses))
-    
+
     print(f"Generated {len(candidates)} assembly candidates")
-    
+
     # Validate in parallel
     valid_instructions = []
     validation_args = [(c[0], c[1], c[2]) for c in candidates]
     superclass_map = {c[0]: c[3] for c in candidates}
-    
+
     print(f"Validating with {num_workers} workers...")
-    
+
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
         futures = {executor.submit(validate_instruction, arg): arg for arg in validation_args}
-        
+
         completed = 0
         for future in as_completed(futures):
             completed += 1
             if completed % 100 == 0:
                 print(f"  Validated {completed}/{len(validation_args)}...")
-            
+
             result = future.result()
             if result is not None:
                 llvm_enum_name, test_asm = result
-                
+
                 valid_instr = ValidInstruction(
                     llvm_enum_name=llvm_enum_name,
                     opcode_hex="",  # Could be computed from encoding bits
@@ -510,7 +513,7 @@ def process_instructions(
                     latency_type=infer_latency_type(llvm_enum_name, superclass_map.get(llvm_enum_name, [])),
                 )
                 valid_instructions.append(valid_instr)
-    
+
     print(f"Found {len(valid_instructions)} valid instructions")
     return valid_instructions
 
@@ -525,10 +528,10 @@ def write_output(instructions: list[ValidInstruction], output_path: Path):
             "test_asm": instr.test_asm,
             "latency_type": instr.latency_type,
         })
-    
+
     with open(output_path, "w") as f:
         json.dump(output, f, indent=2)
-    
+
     print(f"Wrote {len(output)} instructions to {output_path}")
 
 
@@ -545,13 +548,15 @@ def main():
     parser.add_argument(
         "input",
         type=Path,
-        help="Path to riscv_defs.json (from llvm-tblgen -dump-json)",
+        nargs="?",
+        default=DEFAULT_OUTPUT_DIR / "riscv_defs.json",
+        help="Path to riscv_defs.json (default: output/riscv_defs.json)",
     )
     parser.add_argument(
         "-o", "--output",
         type=Path,
-        default=Path("esp32c6_instructions.json"),
-        help="Output JSON file path (default: esp32c6_instructions.json)",
+        default=DEFAULT_OUTPUT_DIR / "esp32c6_instructions.json",
+        help="Output JSON file path (default: output/esp32c6_instructions.json)",
     )
     parser.add_argument(
         "--llvm-mc",
@@ -570,30 +575,30 @@ def main():
         action="store_true",
         help="Enable verbose output",
     )
-    
+
     args = parser.parse_args()
-    
+
     # Verify llvm-mc exists
     if not args.llvm_mc.exists():
         print(f"Error: llvm-mc not found at {args.llvm_mc}", file=sys.stderr)
         print("Build it with: ./config.sh build", file=sys.stderr)
         sys.exit(1)
-    
+
     # Verify input exists
     if not args.input.exists():
         print(f"Error: Input file not found: {args.input}", file=sys.stderr)
         sys.exit(1)
-    
+
     # Load and process
     instructions = load_instructions(args.input)
-    
+
     filtered = filter_instructions(instructions)
     print(f"After filtering: {len(filtered)} candidate instructions")
-    
+
     valid = process_instructions(filtered, args.llvm_mc, args.jobs)
-    
+
     write_output(valid, args.output)
-    
+
     # Summary by latency type
     print("\nSummary by latency type:")
     type_counts: dict[str, int] = {}

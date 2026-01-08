@@ -5,3 +5,4 @@ compile_commands.json
 externalDeps
 riscv_defs.json
 esp32c6_instructions.json
+paper
