@@ -76,21 +76,7 @@ class LatencyBenchmarkGenerator:
     SKIPPED INSTRUCTION CATEGORIES AND MEASUREMENT STRATEGIES
     ==========================================================================
 
-    1. STORE INSTRUCTIONS (sb, sh, sw, c.sw, c.swsp)
-       -------------------------------------------------------------------------
-       WHY SKIPPED:
-       - Stores don't produce a register result for chaining
-       - Store latency is typically hidden by write buffers
-       - True "latency" is store-to-load forwarding time
-
-       HOW TO MEASURE:
-       - Measure store-to-load forwarding: sw followed by lw from same address
-       - Measure store throughput (independent stores) instead of latency
-       - Use memory barriers to force store completion
-       - Chain: store + load pairs where load depends on store
-       - Example: "sw a0, 0(a1); lw a0, 0(a1)" measures forwarding latency
-
-    2. BYTE/HALF LOADS (lb, lbu, lh, lhu)
+    1. BYTE/HALF LOADS (lb, lbu, lh, lhu)
        -------------------------------------------------------------------------
        WHY SKIPPED:
        - Load only 1-2 bytes, which is not a valid 32-bit address
@@ -105,7 +91,7 @@ class LatencyBenchmarkGenerator:
        - Measure throughput instead of latency (independent loads)
        - Use indexed addressing with base address restoration
 
-    3. STACK POINTER INSTRUCTIONS (c.addi16sp, c.addi4spn, c.lwsp, c.swsp)
+    2. STACK POINTER INSTRUCTIONS (c.addi16sp, c.addi4spn, c.lwsp, c.swsp)
        -------------------------------------------------------------------------
        WHY SKIPPED:
        - Modify or depend on stack pointer (sp)
@@ -119,7 +105,7 @@ class LatencyBenchmarkGenerator:
        - Measure equivalent non-sp instructions as proxy
        - Example: Save sp to s0, run benchmark, restore sp from s0
 
-    4. ZERO REGISTER HINTS (c.add zero, c.li zero, c.mv zero, c.slli zero)
+    3. ZERO REGISTER HINTS (c.add zero, c.li zero, c.mv zero, c.slli zero)
        -------------------------------------------------------------------------
        WHY SKIPPED:
        - Write to x0 (zero) register which is hardwired to 0
@@ -132,7 +118,7 @@ class LatencyBenchmarkGenerator:
        - Check if they consume execution resources
        - Use performance counters to verify execution
 
-    5. SYSTEM INSTRUCTIONS (ecall, ebreak, mret, sret, wfi, fence, csr*)
+    4. SYSTEM INSTRUCTIONS (ecall, ebreak, mret, sret, wfi, fence, csr*)
        -------------------------------------------------------------------------
        WHY SKIPPED:
        - ecall/ebreak: Trigger exceptions/traps
@@ -148,7 +134,7 @@ class LatencyBenchmarkGenerator:
        - CSR access: Use only user-accessible CSRs (cycle, time, instret)
        - Run in machine mode or set up proper privilege levels
 
-    6. GENERIC INSTRUCTION ENCODINGS (.insn)
+    5. GENERIC INSTRUCTION ENCODINGS (.insn)
        -------------------------------------------------------------------------
        WHY SKIPPED:
        - .insn is a pseudo-instruction for custom encodings
@@ -323,25 +309,73 @@ class LatencyBenchmarkGenerator:
 
     def _gen_store_chain(self, instr: Instruction) -> Optional[str]:
         """
-        Generate measurement for store instructions.
+        Generate measurement for store instructions using store-to-load forwarding.
 
-        Stores don't produce a register result, so we can't create a true
-        dependency chain through registers.
+        Strategy: Measure store-to-load forwarding latency using store+load pairs.
+        This measures the time for a store to be visible to a subsequent load,
+        which represents the minimal store latency (all hits in L1 cache).
 
-        SKIPPED - See class docstring for measurement strategies.
-        Key approach: Measure store-to-load forwarding latency instead.
+        Chain pattern:
+        - Store a0 to memory at address a1
+        - Load from memory back to a0 (store-to-load forwarding)
+        - Repeat (next store depends on previous load)
+
+        Register setup:
+        - a0: value being stored/loaded (dependency chain)
+        - a1: stable address register (points to aligned memory)
+
+        The measured latency is store+load combined. To isolate store latency,
+        subtract the known load latency (typically 3 cycles on ESP32-C6).
         """
-        return None
+        asm = instr.test_asm.lower()
+
+        # Skip SP-relative stores
+        if "sp" in asm:
+            return None
+
+        # Extract the mnemonic
+        parts = asm.split()
+        if not parts:
+            return None
+
+        mnemonic = parts[0]
+
+        # Map store instructions to corresponding load for forwarding
+        # Use unsigned loads for byte/half to avoid sign-extension issues
+        # Register allocation: a0 = data, a1 = address (a5 for compressed)
+        # Note: Compressed instructions use RVC register set (s0-s7, a0-a7)
+        # We use a5 for c.sw since a1 is also valid for compressed format
+        store_load_pairs = {
+            "sw": ("sw a0, 0(a1)", "lw a0, 0(a1)"),
+            "sh": ("sh a0, 0(a1)", "lhu a0, 0(a1)"),  # Use unsigned load
+            "sb": ("sb a0, 0(a1)", "lbu a0, 0(a1)"),  # Use unsigned load
+            "c.sw": ("c.sw a0, 0(a1)", "c.lw a0, 0(a1)"),  # a1 is valid for compressed
+        }
+
+        if mnemonic not in store_load_pairs:
+            return None
+
+        store_instr, load_instr = store_load_pairs[mnemonic]
+
+        # Generate store+load pairs to create dependency chain through memory
+        chain_lines = []
+        for i in range(self.config.chain_length):
+            chain_lines.append(f'        "{store_instr}\\n"')
+            chain_lines.append(f'        "{load_instr}\\n"')
+
+        return "\n".join(chain_lines)
 
     def _gen_load_store_chain(self, instr: Instruction) -> Optional[str]:
         """Handle compressed load/store instructions."""
         asm = instr.test_asm.lower()
 
-        # Only word loads can chain (c.lw) - byte/half loads can't
-        if "lw" in asm:
+        # Word loads can chain with self-referential pointer
+        if "lw" in asm and "sw" not in asm:
             return self._gen_load_chain(instr)
-        elif "sw" in asm or "sh" in asm or "sb" in asm:
-            # SKIPPED - stores need special handling
+        # Stores use store-to-load forwarding
+        elif "sw" in asm:
+            return self._gen_store_chain(instr)
+        elif "sh" in asm or "sb" in asm:
             return self._gen_store_chain(instr)
         elif "lh" in asm or "lb" in asm:
             # SKIPPED - byte/half loads can't maintain valid address chain
@@ -536,6 +570,14 @@ class LatencyBenchmarkGenerator:
 
         return "\n".join(chain_lines)
 
+    def _is_store_instruction(self, instr: Instruction) -> bool:
+        """Check if instruction is a store (writes to memory)."""
+        asm = instr.test_asm.lower()
+        # Store instructions: sw, sh, sb and their compressed variants
+        # Note: swsp uses stack pointer and is skipped
+        store_mnemonics = ["sw ", "sh ", "sb ", "c.sw ", "c.sh ", "c.sb "]
+        return any(asm.startswith(m) for m in store_mnemonics)
+
     def _generate_benchmark_function(self, instr: Instruction) -> Optional[str]:
         """Generate complete benchmark function for an instruction."""
         chain = self._generate_dependency_chain(instr)
@@ -546,19 +588,28 @@ class LatencyBenchmarkGenerator:
 
         func_name = self._sanitize_name(instr.llvm_enum_name)
 
-        # Generate setup code based on instruction type
-        setup_code = self._generate_setup_code(instr)
+        # Detect if this is actually a store instruction
+        is_store = self._is_store_instruction(instr)
 
-        # Determine if this is a load instruction that needs address setup
-        needs_addr_setup = instr.latency_type in ["load", "load_store", "atomic"]
+        # Generate setup code based on instruction type
+        setup_code = self._generate_setup_code(instr, is_store=is_store)
+
+        # Determine if this is a load/store instruction that needs address setup
+        needs_addr_setup = instr.latency_type in ["load", "store", "load_store", "atomic"]
 
         # Build the function with appropriate asm constraints
         if needs_addr_setup:
-            # For loads: Use input constraint to initialize a0 with base_addr
-            asm_constraints = ': "+r"(base_addr) :: "a1", "a2", "a3", "a4", "a5", "t0", "t1", "memory"'
-            # Prepend instruction to move base_addr into a0
-            asm_init = '        "mv a0, %0\\n"  /* Load base address into a0 */\n'
-            post_asm = '        base_addr = base_addr; /* Prevent optimization */'
+            if is_store:
+                # For stores: a0 = data, a1 = address
+                asm_constraints = ': "+r"(base_addr) :: "a0", "a2", "a3", "a4", "a5", "t0", "t1", "memory"'
+                asm_init = '        "mv a1, %0\\n"  /* Load base address into a1 */\n        "li a0, 0x5555\\n"  /* Initialize data register */\n'
+                post_asm = '        base_addr = base_addr; /* Prevent optimization */'
+            else:
+                # For loads: Use input constraint to initialize a0 with base_addr
+                asm_constraints = ': "+r"(base_addr) :: "a1", "a2", "a3", "a4", "a5", "t0", "t1", "memory"'
+                # Prepend instruction to move base_addr into a0
+                asm_init = '        "mv a0, %0\\n"  /* Load base address into a0 */\n'
+                post_asm = '        base_addr = base_addr; /* Prevent optimization */'
         else:
             asm_constraints = '::: "a0", "a1", "a2", "a3", "a4", "a5", "t0", "t1", "memory"'
             asm_init = ''
@@ -606,7 +657,7 @@ static int bench_latency_{func_name}(uint32_t iterations, benchmark_result_t *re
         self.generated_benchmarks.append((instr, func_name))
         return func
 
-    def _generate_setup_code(self, instr: Instruction) -> str:
+    def _generate_setup_code(self, instr: Instruction, is_store: bool = False) -> str:
         """Generate setup code to initialize registers/memory before benchmark."""
         lat_type = instr.latency_type
 
@@ -623,6 +674,16 @@ static int bench_latency_{func_name}(uint32_t iterations, benchmark_result_t *re
     /* Initialize a2 with a small value for atomic operations */
     register uint32_t a2_val __asm__("a2") = 1;
     (void)a2_val;'''
+        elif lat_type == "store" or (lat_type == "load_store" and is_store):
+            # For stores, we use store-to-load forwarding
+            # a0: data register (value being stored/loaded)
+            # a1: address register (stable pointer to memory)
+            return '''    /* Setup: create aligned memory for store-to-load forwarding */
+    static volatile uint32_t mem_buffer[16] __attribute__((aligned(64)));
+    mem_buffer[0] = 0x12345678;  /* Initial value */
+
+    /* Store pointer address - will be loaded into a1 via asm input */
+    uint32_t base_addr = (uint32_t)(uintptr_t)&mem_buffer[0];'''
         elif lat_type == "branch":
             # For branches, set up registers so branches are never taken
             # a0 = 0, a1 = 1 allows control over branch direction
