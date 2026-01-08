@@ -76,36 +76,7 @@ class LatencyBenchmarkGenerator:
     SKIPPED INSTRUCTION CATEGORIES AND MEASUREMENT STRATEGIES
     ==========================================================================
 
-    1. ATOMIC INSTRUCTIONS (amoadd.w, amoswap.w, lr.w, sc.w, etc.)
-       -------------------------------------------------------------------------
-       WHY SKIPPED:
-       - Test patterns use same register for address and data: "amoadd.w a0, a0, (a0)"
-       - After first instruction, a0 contains old memory value, not the address
-       - Subsequent instructions access invalid addresses and crash
-
-       HOW TO MEASURE:
-       - Use different registers: "amoadd.w a1, a2, (a0)" where a0 stays as address
-       - Create test patterns with separate address (a0) and data (a1) registers
-       - For LR/SC pairs: Must measure as a pair, not individually
-       - Setup: Allocate aligned memory, keep address in dedicated register
-       - Example chain: amoadd.w a1, a2, (a0) repeated (a0 unchanged, a1 gets result)
-
-    2. BRANCH INSTRUCTIONS (beq, bne, blt, bge, etc.)
-       -------------------------------------------------------------------------
-       WHY SKIPPED:
-       - Branches change control flow, breaking the sequential chain
-       - Taken branches jump away from the measurement loop
-       - Branch prediction effects complicate latency measurement
-
-       HOW TO MEASURE:
-       - Create "not-taken" chains: Set up registers so branch is never taken
-         Example: "li a0, 0; li a1, 1; beq a0, a1, skip" (never taken)
-       - Measure branch misprediction penalty separately
-       - For taken branches: Jump to next instruction (offset = instruction size)
-       - Use performance counters to measure branch predictor behavior
-       - Alternative: Measure comparison latency via dependent arithmetic
-
-    3. JUMP INSTRUCTIONS (jal, jalr, c.j, c.jr, c.jal, c.jalr)
+    1. JUMP INSTRUCTIONS (jal, jalr, c.j, c.jr, c.jal, c.jalr)
        -------------------------------------------------------------------------
        WHY SKIPPED:
        - Jumps change control flow unconditionally
@@ -120,7 +91,7 @@ class LatencyBenchmarkGenerator:
        - Use position-independent code with computed offsets
        - Alternative: Measure in a loop with known iteration count
 
-    4. STORE INSTRUCTIONS (sb, sh, sw, c.sw, c.swsp)
+    2. STORE INSTRUCTIONS (sb, sh, sw, c.sw, c.swsp)
        -------------------------------------------------------------------------
        WHY SKIPPED:
        - Stores don't produce a register result for chaining
@@ -134,7 +105,7 @@ class LatencyBenchmarkGenerator:
        - Chain: store + load pairs where load depends on store
        - Example: "sw a0, 0(a1); lw a0, 0(a1)" measures forwarding latency
 
-    5. BYTE/HALF LOADS (lb, lbu, lh, lhu)
+    3. BYTE/HALF LOADS (lb, lbu, lh, lhu)
        -------------------------------------------------------------------------
        WHY SKIPPED:
        - Load only 1-2 bytes, which is not a valid 32-bit address
@@ -149,7 +120,7 @@ class LatencyBenchmarkGenerator:
        - Measure throughput instead of latency (independent loads)
        - Use indexed addressing with base address restoration
 
-    6. STACK POINTER INSTRUCTIONS (c.addi16sp, c.addi4spn, c.lwsp, c.swsp)
+    4. STACK POINTER INSTRUCTIONS (c.addi16sp, c.addi4spn, c.lwsp, c.swsp)
        -------------------------------------------------------------------------
        WHY SKIPPED:
        - Modify or depend on stack pointer (sp)
@@ -163,7 +134,7 @@ class LatencyBenchmarkGenerator:
        - Measure equivalent non-sp instructions as proxy
        - Example: Save sp to s0, run benchmark, restore sp from s0
 
-    7. ZERO REGISTER HINTS (c.add zero, c.li zero, c.mv zero, c.slli zero)
+    5. ZERO REGISTER HINTS (c.add zero, c.li zero, c.mv zero, c.slli zero)
        -------------------------------------------------------------------------
        WHY SKIPPED:
        - Write to x0 (zero) register which is hardwired to 0
@@ -176,7 +147,7 @@ class LatencyBenchmarkGenerator:
        - Check if they consume execution resources
        - Use performance counters to verify execution
 
-    8. SYSTEM INSTRUCTIONS (ecall, ebreak, mret, sret, wfi, fence, csr*)
+    6. SYSTEM INSTRUCTIONS (ecall, ebreak, mret, sret, wfi, fence, csr*)
        -------------------------------------------------------------------------
        WHY SKIPPED:
        - ecall/ebreak: Trigger exceptions/traps
@@ -192,7 +163,7 @@ class LatencyBenchmarkGenerator:
        - CSR access: Use only user-accessible CSRs (cycle, time, instret)
        - Run in machine mode or set up proper privilege levels
 
-    9. GENERIC INSTRUCTION ENCODINGS (.insn)
+    7. GENERIC INSTRUCTION ENCODINGS (.insn)
        -------------------------------------------------------------------------
        WHY SKIPPED:
        - .insn is a pseudo-instruction for custom encodings
@@ -397,14 +368,74 @@ class LatencyBenchmarkGenerator:
         """
         Generate measurement for branch instructions.
 
-        SKIPPED - Branches change control flow, breaking sequential chains.
+        Strategy: Create "not-taken" branches to measure minimal branch latency.
+        - Set up registers so the branch condition is never true
+        - Use local labels with forward reference to next instruction
+        - Measure throughput of never-taken branches
 
-        See class docstring for measurement strategies:
-        - Use not-taken branches with careful register setup
-        - Measure taken branches that jump to next instruction
-        - Measure comparison latency via dependent arithmetic
+        On in-order cores like ESP32-C6, this gives per-instruction latency.
+        This measures the compare-and-decide latency, NOT branch misprediction penalty.
+
+        Register setup:
+        - a0 = 0, a1 = 1 for equality/inequality comparisons
+        - This ensures specific branch conditions are never taken
         """
-        return None
+        asm = instr.test_asm.lower()
+
+        # Extract the mnemonic
+        parts = asm.split()
+        if not parts:
+            return None
+
+        mnemonic = parts[0]
+
+        # Map branch types to never-taken versions
+        # We use a0=0, a1=1 setup
+        # beq: 0 == 1 is false -> never taken ✓
+        # bne: 0 != 1 is true -> always taken, so swap operands: bne a1, a0 with a1=a0? No, use bge instead
+        # blt: 0 < 1 is true -> always taken, swap: blt a1, a0 (1 < 0 is false)
+        # bge: 0 >= 1 is false -> never taken ✓
+        # bltu: 0 < 1 (unsigned) is true -> swap: bltu a1, a0 (1 < 0 is false)
+        # bgeu: 0 >= 1 (unsigned) is false -> never taken ✓
+
+        # For compressed branches:
+        # c.beqz: a0 == 0 is true with a0=0 -> use a1 instead (a1=1, 1==0 is false)
+        # c.bnez: a0 != 0 is false with a0=0 -> never taken ✓
+
+        # Determine the not-taken branch instruction
+        # Use "1f" as forward label reference to jump to next instruction if taken
+        if mnemonic == "beq":
+            new_asm = "beq a0, a1, 1f"  # 0 == 1 is false, never taken
+        elif mnemonic == "bne":
+            # bne with a0=0, a1=1: 0 != 1 is TRUE, so it would be taken
+            # Instead use: beq (same latency, different condition) or swap args
+            # Actually, let's just measure with taken branch to same location
+            # Use "1f" label - even if taken, it goes to next instruction
+            new_asm = "bne a0, a0, 1f"  # 0 != 0 is false, never taken
+        elif mnemonic == "blt":
+            new_asm = "blt a1, a0, 1f"  # 1 < 0 is false, never taken
+        elif mnemonic == "bge":
+            new_asm = "bge a0, a1, 1f"  # 0 >= 1 is false, never taken
+        elif mnemonic == "bltu":
+            new_asm = "bltu a1, a0, 1f"  # 1 < 0 (unsigned) is false, never taken
+        elif mnemonic == "bgeu":
+            new_asm = "bgeu a0, a1, 1f"  # 0 >= 1 (unsigned) is false, never taken
+        elif mnemonic == "c.beqz":
+            new_asm = "c.beqz a1, 1f"  # a1=1, 1 == 0 is false, never taken
+        elif mnemonic == "c.bnez":
+            new_asm = "c.bnez a0, 1f"  # a0=0, 0 != 0 is false, never taken
+        else:
+            return None
+
+        # Generate chain with local labels
+        # Each branch jumps to label "1:" which is placed right after it
+        # The "1f" means "forward reference to label 1"
+        chain_lines = []
+        for i in range(self.config.chain_length):
+            chain_lines.append(f'        "{new_asm}\\n"')
+            chain_lines.append(f'        "1:\\n"')  # Label for the branch target
+
+        return "\n".join(chain_lines)
 
     def _gen_jump_chain(self, instr: Instruction) -> Optional[str]:
         """
@@ -552,6 +583,14 @@ static int bench_latency_{func_name}(uint32_t iterations, benchmark_result_t *re
     /* Initialize a2 with a small value for atomic operations */
     register uint32_t a2_val __asm__("a2") = 1;
     (void)a2_val;'''
+        elif lat_type == "branch":
+            # For branches, set up registers so branches are never taken
+            # a0 = 0, a1 = 1 allows control over branch direction
+            return '''    /* Setup: initialize registers for never-taken branches */
+    /* a0 = 0, a1 = 1: beq never taken, bge never taken, etc. */
+    register uint32_t a0_val __asm__("a0") = 0;
+    register uint32_t a1_val __asm__("a1") = 1;
+    (void)a0_val; (void)a1_val;'''
         elif lat_type in ["load", "load_store"]:
             # For loads, we need valid memory addresses
             # Store pointer in a regular C variable - it will be passed to asm via input constraint
