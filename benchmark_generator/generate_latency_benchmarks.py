@@ -423,15 +423,47 @@ class LatencyBenchmarkGenerator:
         """
         Generate dependency chain for atomic instructions.
 
-        SKIPPED - Test patterns use same register for address and data,
-        corrupting the address after first instruction.
+        Strategy: Use separate registers for address and data to maintain
+        a stable address throughout the chain:
+        - a0: stable address register (points to aligned, self-referential memory)
+        - a1: destination register (rd) - receives old value from memory
+        - a2: source operand (rs2) - value to use in atomic operation
 
-        See class docstring for measurement strategies:
-        - Use separate registers for address and data
-        - Example: "amoadd.w a1, a2, (a0)" keeps a0 as stable address
-        - LR/SC must be measured as pairs
+        The chain is maintained through memory dependencies - each atomic
+        operation reads and writes the same memory location, creating a
+        serialization point.
+
+        LR/SC pairs are skipped as they require special handling.
         """
-        return None
+        asm = instr.test_asm.lower()
+
+        # Skip LR/SC - they must be measured as pairs with reservation logic
+        if "lr." in asm or "sc." in asm:
+            return None
+
+        # Extract the mnemonic (e.g., "amoadd.w", "amoswap.w", "amoand.w")
+        parts = asm.split()
+        if not parts:
+            return None
+
+        mnemonic = parts[0]
+
+        # Validate it's an AMO instruction
+        if not mnemonic.startswith("amo"):
+            return None
+
+        # Generate the rewritten instruction with proper register allocation:
+        # amo*.w rd, rs2, (rs1) -> amo*.w a1, a2, (a0)
+        # - a0 stays stable (address)
+        # - a1 receives the old memory value
+        # - a2 provides the source operand for the atomic operation
+        new_asm = f"{mnemonic} a1, a2, (a0)"
+
+        chain_lines = []
+        for i in range(self.config.chain_length):
+            chain_lines.append(f'        "{new_asm}\\n"')
+
+        return "\n".join(chain_lines)
 
     def _generate_benchmark_function(self, instr: Instruction) -> Optional[str]:
         """Generate complete benchmark function for an instruction."""
@@ -507,8 +539,21 @@ static int bench_latency_{func_name}(uint32_t iterations, benchmark_result_t *re
         """Generate setup code to initialize registers/memory before benchmark."""
         lat_type = instr.latency_type
 
-        if lat_type in ["load", "load_store", "atomic"]:
-            # For loads and atomics, we need valid memory addresses
+        if lat_type == "atomic":
+            # For atomics, we need valid aligned memory and proper register setup
+            # a0: stable address, a1: destination, a2: source operand
+            return '''    /* Setup: create aligned memory for atomic operations */
+    static volatile uint32_t mem_buffer[16] __attribute__((aligned(64)));
+    mem_buffer[0] = (uint32_t)(uintptr_t)&mem_buffer[0];
+
+    /* Store pointer address - will be loaded into a0 via asm input */
+    uint32_t base_addr = (uint32_t)(uintptr_t)&mem_buffer[0];
+
+    /* Initialize a2 with a small value for atomic operations */
+    register uint32_t a2_val __asm__("a2") = 1;
+    (void)a2_val;'''
+        elif lat_type in ["load", "load_store"]:
+            # For loads, we need valid memory addresses
             # Store pointer in a regular C variable - it will be passed to asm via input constraint
             return '''    /* Setup: create a memory location that points to itself */
     static volatile uint32_t mem_buffer[16] __attribute__((aligned(64)));
