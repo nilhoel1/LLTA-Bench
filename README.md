@@ -64,6 +64,7 @@ python3 benchmark_generator/generate_latency_benchmarks.py
 
 # 5. Build and flash ESP32-C6 firmware
 cd esp32c6_benchmark
+# Important: Source idf from esp32!
 idf.py set-target esp32c6
 idf.py build flash
 

@@ -8,3 +8,4 @@ esp32c6_instructions.json
 *.txt
 *.json
 *.csv
+*.old
