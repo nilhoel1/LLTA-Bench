@@ -181,4 +181,15 @@ extern const char *BENCHMARK_SET_NAME;
     .run_benchmark = bench_func                                                \
 }
 
+/**
+ * @brief Macro to create a throughput benchmark entry
+ */
+#define THROUGHPUT_BENCHMARK_ENTRY(llvm_name, asm_str, lat_type, bench_func) { \
+    .instruction_name = llvm_name,                                             \
+    .asm_syntax = asm_str,                                                     \
+    .latency_type = lat_type,                                                  \
+    .bench_type = BENCH_TYPE_THROUGHPUT,                                       \
+    .run_benchmark = bench_func                                                \
+}
+
 #endif /* BENCHMARK_INTERFACE_H */

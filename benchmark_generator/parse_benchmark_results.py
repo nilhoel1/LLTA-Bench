@@ -80,29 +80,36 @@ def generate_summary(results: list) -> dict:
     successful = [r for r in results if r.status == 0]
     failed = [r for r in results if r.status != 0]
 
-    # Group by latency type
-    by_type = {}
-    for r in successful:
-        if r.latency_type not in by_type:
-            by_type[r.latency_type] = []
-        by_type[r.latency_type].append(r)
+    # Helper to calculate stats for a subset of results
+    def calc_stats(subset):
+        if not subset:
+            return {}
+        by_type = {}
+        for r in subset:
+            if r.latency_type not in by_type:
+                by_type[r.latency_type] = []
+            by_type[r.latency_type].append(r)
+        
+        type_stats = {}
+        for lat_type, type_results in by_type.items():
+            avg = sum(r.avg_cycles for r in type_results) / len(type_results)
+            type_stats[lat_type] = {
+                "count": len(type_results),
+                "avg_cycles": round(avg, 2),
+                "min_cycles": min(r.min_cycles for r in type_results),
+                "max_cycles": max(r.max_cycles for r in type_results)
+            }
+        return type_stats
 
-    # Calculate averages per type
-    type_averages = {}
-    for lat_type, type_results in by_type.items():
-        avg = sum(r.avg_cycles for r in type_results) / len(type_results)
-        type_averages[lat_type] = {
-            "count": len(type_results),
-            "avg_latency": round(avg, 2),
-            "min_latency": min(r.min_cycles for r in type_results),
-            "max_latency": max(r.max_cycles for r in type_results)
-        }
-
+    latency_subset = [r for r in successful if r.type == "latency"]
+    throughput_subset = [r for r in successful if r.type == "throughput"]
+    
     return {
         "total_benchmarks": len(results),
         "successful": len(successful),
         "failed": len(failed),
-        "by_latency_type": type_averages
+        "latency_stats": calc_stats(latency_subset),
+        "throughput_stats": calc_stats(throughput_subset)
     }
 
 
@@ -113,21 +120,24 @@ def print_table(results: list):
         return
 
     # Header
-    print(f"{'Instruction':<20} {'Assembly':<30} {'Type':<12} {'Min':<6} {'Avg':<6} {'Max':<6} {'Status':<8}")
-    print("-" * 100)
+    print(f"{'Instruction':<20} {'Assembly':<30} {'Bench Type':<12} {'Lat Type':<12} {'Min':<6} {'Avg':<6} {'Max':<6} {'Status':<8}")
+    print("-" * 115)
 
-    # Sort by latency type, then by name
-    sorted_results = sorted(results, key=lambda r: (r.latency_type, r.instruction))
+    # Sort by instruction name, then type
+    sorted_results = sorted(results, key=lambda r: (r.instruction, r.type))
 
     for r in sorted_results:
         status_str = "OK" if r.status == 0 else f"ERR({r.status})"
-        print(f"{r.instruction:<20} {r.asm:<30} {r.latency_type:<12} {r.min_cycles:<6} {r.avg_cycles:<6} {r.max_cycles:<6} {status_str:<8}")
+        # Shorten bench type for display
+        btype = "LAT" if r.type == "latency" else "THR" if r.type == "throughput" else r.type[:3].upper()
+        
+        print(f"{r.instruction:<20} {r.asm:<30} {btype:<12} {r.latency_type:<12} {r.min_cycles:<6} {r.avg_cycles:<6} {r.max_cycles:<6} {status_str:<8}")
 
 
 def export_csv(results: list, output_file: str):
     """Export results to CSV format."""
     with open(output_file, 'w') as f:
-        f.write("instruction,asm,type,latency_type,min_cycles,avg_cycles,max_cycles,iterations,status\n")
+        f.write("instruction,asm,bench_type,latency_type,min_cycles,avg_cycles,max_cycles,iterations,status\n")
         for r in results:
             asm_escaped = r.asm.replace('"', '""')
             f.write(f'{r.instruction},"{asm_escaped}",{r.type},{r.latency_type},{r.min_cycles},{r.avg_cycles},{r.max_cycles},{r.iterations},{r.status}\n')
@@ -187,9 +197,16 @@ def main():
     print(f"Total benchmarks: {summary['total_benchmarks']}")
     print(f"Successful: {summary['successful']}")
     print(f"Failed: {summary['failed']}")
-    print("\nBy latency type:")
-    for lat_type, stats in summary.get('by_latency_type', {}).items():
-        print(f"  {lat_type}: {stats['count']} instructions, avg={stats['avg_latency']} cycles")
+    
+    if summary.get('latency_stats'):
+        print("\n--- Latency (cycles) ---")
+        for lat_type, stats in summary['latency_stats'].items():
+            print(f"  {lat_type:<12}: {stats['count']:<3} instrs, avg={stats['avg_cycles']:>6.2f}")
+            
+    if summary.get('throughput_stats'):
+        print("\n--- Throughput (cycles/instr) ---")
+        for lat_type, stats in summary['throughput_stats'].items():
+            print(f"  {lat_type:<12}: {stats['count']:<3} instrs, avg={stats['avg_cycles']:>6.2f}")
 
     # Print table
     if not args.quiet:
