@@ -110,16 +110,19 @@ add a0, a0, a0   ; Cycle 3
 **Total cycles ÷ chain length = per-instruction latency**
 
 **Throughput** is measured using independent instruction sequences (different
-destination registers) to avoid dependencies per [uops.info](https://uops.info/) methodology:
+destination registers) to avoid dependencies per [uops.info](https://uops.info/) methodology.
+We test sequence lengths of 1, 2, 4, and 8 instructions and report the minimum cycles per instruction
+to find the optimal throughput (accounting for pipeline fill/issue width).
 
 ```
 add a0, t0, t1   ; Cycle 1 (independent)
-add a1, t0, t1   ; Cycle 1 (can execute in parallel if pipelined)
-add a2, t0, t1   ; Cycle 1
-... (8 independent instances)
+add a1, t0, t1   ; Cycle 1 (parallel execution)
+...
 ```
 
 **Total cycles ÷ instruction count = reciprocal throughput (cycles/instr)**
+
+**Division Variants**: For division operations, we test with multiple operand values (Low/High latency pairs) to characterize data-dependent latency.
 
 ## Results Summary (ESP32-C6 @ 160MHz)
 

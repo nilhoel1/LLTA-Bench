@@ -190,6 +190,12 @@ def main():
         action="store_true",
         help="Generate only throughput benchmarks"
     )
+    parser.add_argument(
+        "--category",
+        choices=["all", "arithmetic", "multiply", "memory", "control", "atomic"],
+        default="all",
+        help="Filter by instruction category (default: all)"
+    )
 
     args = parser.parse_args()
 
@@ -207,16 +213,80 @@ def main():
         independent_count=args.independent_count
     )
 
-    # Convert to Instruction objects
-    instructions = [
-        Instruction(
+    # Convert to Instruction objects with variants
+    instructions = []
+    div_mnemonics = {"div", "divu", "rem", "remu"}
+
+    # Low latency setup (Small operands: 20, 4)
+    setup_low = """    /* Setup: Low Latency Operands (20, 4) */
+    register uint32_t t0_val __asm__("t0") = 20;
+    register uint32_t t1_val __asm__("t1") = 4;
+    register uint32_t s0_val __asm__("s0") = 20;
+    register uint32_t s1_val __asm__("s1") = 4;
+    (void)t0_val; (void)t1_val; (void)s0_val; (void)s1_val;"""
+
+    # High latency setup (Large operands: Max, 3)
+    setup_high = """    /* Setup: High Latency Operands (Large / Small) */
+    register uint32_t t0_val __asm__("t0") = 0xFFFFFFF0;
+    register uint32_t t1_val __asm__("t1") = 3;
+    register uint32_t s0_val __asm__("s0") = 0xFFFFFFF0;
+    register uint32_t s1_val __asm__("s1") = 3;
+    (void)t0_val; (void)t1_val; (void)s0_val; (void)s1_val;"""
+
+    for d in instructions_data:
+        # Create base instruction
+        base_instr = Instruction(
             llvm_enum_name=d["llvm_enum_name"],
             opcode_hex=d.get("opcode_hex", ""),
             test_asm=d["test_asm"],
-            latency_type=d.get("latency_type", "unknown")
+            latency_type=d.get("latency_type", "unknown"),
+            tablegen_entry=d.get("tablegen_entry")
         )
-        for d in instructions_data
-    ]
+        instructions.append(base_instr)
+        
+        # Check for variants
+        asm = d["test_asm"].lower().strip()
+        mnemonic = asm.split()[0] if asm.split() else ""
+        
+        if mnemonic in div_mnemonics:
+            # Low Latency Variant
+            low_instr = Instruction(
+                llvm_enum_name=d["llvm_enum_name"],
+                opcode_hex=d.get("opcode_hex", ""),
+                test_asm=d["test_asm"],
+                latency_type=d.get("latency_type", "unknown"),
+                tablegen_entry=d.get("tablegen_entry"),
+                setup_code_override=setup_low,
+                name_suffix="_LOW_LAT"
+            )
+            instructions.append(low_instr)
+            
+            # High Latency Variant
+            high_instr = Instruction(
+                llvm_enum_name=d["llvm_enum_name"],
+                opcode_hex=d.get("opcode_hex", ""),
+                test_asm=d["test_asm"],
+                latency_type=d.get("latency_type", "unknown"),
+                tablegen_entry=d.get("tablegen_entry"),
+                setup_code_override=setup_high,
+                name_suffix="_HIGH_LAT"
+            )
+            instructions.append(high_instr)
+
+    # Category filter mapping
+    category_map = {
+        "arithmetic": ["arithmetic"],
+        "multiply": ["multiply"],
+        "memory": ["load", "store", "load_store"],
+        "control": ["branch", "jump"],
+        "atomic": ["atomic"],
+    }
+
+    # Filter by category if specified
+    if args.category != "all":
+        allowed_types = category_map.get(args.category, [])
+        instructions = [i for i in instructions if i.latency_type in allowed_types]
+        print(f"Filtered to {len(instructions)} instructions (category: {args.category})")
 
     latency_functions = []
     throughput_functions = []

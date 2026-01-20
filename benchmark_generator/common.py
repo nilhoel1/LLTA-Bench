@@ -33,6 +33,9 @@ class Instruction:
     opcode_hex: str
     test_asm: str
     latency_type: str
+    tablegen_entry: dict = None  # Full tablegen record from LLVM
+    setup_code_override: str = None # Optional C setup code
+    name_suffix: str = ""        # Suffix for benchmark name (e.g. "_LOW_LAT")
 
 
 # Mapping from JSON latency_type to C enum

@@ -40,6 +40,18 @@ typedef enum {
 } latency_type_t;
 
 /**
+ * @brief Benchmark category for filtering/grouping
+ */
+typedef enum {
+    BENCH_CAT_ARITHMETIC = 0,  // ADD, SUB, AND, OR, XOR, shifts
+    BENCH_CAT_MULTIPLY,        // MUL, MULH, DIV, REM
+    BENCH_CAT_MEMORY,          // Load/Store instructions
+    BENCH_CAT_CONTROL,         // Branches and jumps
+    BENCH_CAT_ATOMIC,          // Atomic operations
+    BENCH_CAT_OTHER            // Misc/unknown
+} benchmark_category_t;
+
+/**
  * @brief Result of a single benchmark measurement
  */
 typedef struct {
@@ -58,6 +70,7 @@ typedef struct {
     const char *asm_syntax;          // Assembly syntax (e.g., "add a0, a0, a0")
     latency_type_t latency_type;     // Category of instruction
     benchmark_type_t bench_type;     // Type of benchmark (latency, throughput, etc.)
+    benchmark_category_t category;   // Category for filtering (arithmetic, memory, etc.)
 
     /**
      * @brief Function pointer to run the benchmark
@@ -173,22 +186,24 @@ extern const char *BENCHMARK_SET_NAME;
 /**
  * @brief Macro to create a benchmark descriptor entry
  */
-#define BENCHMARK_ENTRY(llvm_name, asm_str, lat_type, bench_func) {            \
+#define BENCHMARK_ENTRY(llvm_name, asm_str, lat_type, cat, bench_func) {       \
     .instruction_name = llvm_name,                                             \
     .asm_syntax = asm_str,                                                     \
     .latency_type = lat_type,                                                  \
     .bench_type = BENCH_TYPE_LATENCY,                                          \
+    .category = cat,                                                           \
     .run_benchmark = bench_func                                                \
 }
 
 /**
  * @brief Macro to create a throughput benchmark entry
  */
-#define THROUGHPUT_BENCHMARK_ENTRY(llvm_name, asm_str, lat_type, bench_func) { \
+#define THROUGHPUT_BENCHMARK_ENTRY(llvm_name, asm_str, lat_type, cat, bench_func) { \
     .instruction_name = llvm_name,                                             \
     .asm_syntax = asm_str,                                                     \
     .latency_type = lat_type,                                                  \
     .bench_type = BENCH_TYPE_THROUGHPUT,                                       \
+    .category = cat,                                                           \
     .run_benchmark = bench_func                                                \
 }
 

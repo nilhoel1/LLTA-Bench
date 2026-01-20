@@ -217,6 +217,7 @@ class Instruction:
     out_operands: list[tuple[str, str]] = field(default_factory=list)
     is_pseudo: bool = False
     superclasses: list[str] = field(default_factory=list)
+    tablegen_entry: dict = field(default_factory=dict)  # Full tablegen record
 
 
 @dataclass
@@ -226,6 +227,7 @@ class ValidInstruction:
     opcode_hex: str
     test_asm: str
     latency_type: str
+    tablegen_entry: dict = field(default_factory=dict)  # Full tablegen record
 
 
 # ============================================================================
@@ -282,6 +284,7 @@ def load_instructions(json_path: Path) -> list[Instruction]:
             out_operands=out_operands,
             is_pseudo=is_pseudo,
             superclasses=superclasses,
+            tablegen_entry=record,  # Store full tablegen record
         )
         instructions.append(instr)
 
@@ -482,7 +485,7 @@ def process_instructions(
     for instr in instructions:
         asm_variants = generate_assembly(instr)
         for asm in asm_variants:
-            candidates.append((instr.llvm_enum_name, asm, str(llvm_mc_path), instr.superclasses))
+            candidates.append((instr.llvm_enum_name, asm, str(llvm_mc_path), instr.superclasses, instr.tablegen_entry))
 
     print(f"Generated {len(candidates)} assembly candidates")
 
@@ -490,6 +493,7 @@ def process_instructions(
     valid_instructions = []
     validation_args = [(c[0], c[1], c[2]) for c in candidates]
     superclass_map = {c[0]: c[3] for c in candidates}
+    tablegen_map = {c[0]: c[4] for c in candidates}
 
     print(f"Validating with {num_workers} workers...")
 
@@ -511,6 +515,7 @@ def process_instructions(
                     opcode_hex="",  # Could be computed from encoding bits
                     test_asm=test_asm,
                     latency_type=infer_latency_type(llvm_enum_name, superclass_map.get(llvm_enum_name, [])),
+                    tablegen_entry=tablegen_map.get(llvm_enum_name, {}),
                 )
                 valid_instructions.append(valid_instr)
 
@@ -527,6 +532,7 @@ def write_output(instructions: list[ValidInstruction], output_path: Path):
             "opcode_hex": instr.opcode_hex,
             "test_asm": instr.test_asm,
             "latency_type": instr.latency_type,
+            "tablegen_entry": instr.tablegen_entry,
         })
 
     with open(output_path, "w") as f:

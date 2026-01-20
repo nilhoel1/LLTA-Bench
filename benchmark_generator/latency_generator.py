@@ -10,7 +10,7 @@ instruction becomes the input of the next, forcing sequential execution.
 """
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List
 
 try:
     from .common import Instruction, BenchmarkConfig, LATENCY_TYPE_MAP
@@ -49,10 +49,103 @@ class LatencyBenchmarkGenerator:
        - Pseudo-instruction for custom encodings
     """
 
+    # ========================================================================
+    # TableGen Entry Helpers (Register Class Mapping)
+    # ========================================================================
+
+    # Mapping of LLVM register class names to actual register lists
+    REGCLASS_MAP = {
+        "GPR": ["a0", "a1", "a2", "a3", "a4", "a5", "t0", "t1", "t2", "t3", "t4", "t5"],
+        "GPRNoX0": ["a0", "a1", "a2", "a3", "a4", "a5", "t0", "t1", "t2", "t3", "t4", "t5"],
+        "GPRC": ["a0", "a1", "a2", "a3", "a4", "a5", "s0", "s1"],  # Compressed regs
+        "GPRCMem": ["a0", "a1", "a2", "a3", "a4", "a5", "s0", "s1"],
+        "GPRNoX0X2": ["a0", "a1", "a3", "a4", "a5", "t0", "t1", "t2", "t3", "t4", "t5"],
+        "SR07": ["s0", "s1", "a0", "a1", "a2", "a3", "a4", "a5"],  # RVC s0-s1, a0-a5
+    }
+
+    # Default registers for latency benchmarks
+    DEFAULT_REGS = ["a0", "a1", "a2", "a3", "a4", "a5", "t0", "t1"]
+
     def __init__(self, config: BenchmarkConfig):
         self.config = config
         self.generated_benchmarks = []
         self.skipped_instructions = []
+
+    def _get_operand_regclass(self, operand_list: dict) -> List[str]:
+        """
+        Extract register class names from an InOperandList or OutOperandList.
+        
+        Returns a list of register class names (e.g., ['GPR', 'GPRC']).
+        """
+        regclasses = []
+        args = operand_list.get("args", [])
+        for arg in args:
+            if isinstance(arg, list) and len(arg) >= 1:
+                op_def = arg[0]
+                if isinstance(op_def, dict):
+                    printable = op_def.get("printable", "")
+                    if printable:
+                        regclasses.append(printable)
+        return regclasses
+
+    def _get_registers_for_class(self, regclass: str) -> List[str]:
+        """
+        Map a register class name to a list of usable registers.
+        Falls back to DEFAULT_REGS if unknown.
+        """
+        # Direct lookup
+        if regclass in self.REGCLASS_MAP:
+            return self.REGCLASS_MAP[regclass]
+        
+        # Prefix matching for variants (e.g., GPRNoX0X2 starts with GPR)
+        for key, regs in self.REGCLASS_MAP.items():
+            if regclass.startswith(key):
+                return regs
+        
+        # Fallback to default registers
+        return self.DEFAULT_REGS
+
+    def _get_dest_registers_from_tablegen(self, instr: Instruction) -> List[str]:
+        """
+        Get the list of valid destination registers for an instruction
+        by examining its tablegen_entry OutOperandList.
+        
+        Returns DEFAULT_REGS as fallback if tablegen_entry is unavailable.
+        """
+        if not instr.tablegen_entry:
+            return self.DEFAULT_REGS
+        
+        out_ops = instr.tablegen_entry.get("OutOperandList", {})
+        regclasses = self._get_operand_regclass(out_ops)
+        
+        if regclasses:
+            # Use the first output operand's register class
+            return self._get_registers_for_class(regclasses[0])
+        
+        return self.DEFAULT_REGS
+
+    def _get_src_registers_from_tablegen(self, instr: Instruction) -> List[str]:
+        """
+        Get the list of valid source registers for an instruction
+        by examining its tablegen_entry InOperandList.
+        
+        Returns DEFAULT_REGS as fallback if tablegen_entry is unavailable.
+        """
+        if not instr.tablegen_entry:
+            return self.DEFAULT_REGS
+        
+        in_ops = instr.tablegen_entry.get("InOperandList", {})
+        regclasses = self._get_operand_regclass(in_ops)
+        
+        if regclasses:
+            # Use the first input operand's register class (usually rs1)
+            return self._get_registers_for_class(regclasses[0])
+        
+        return self.DEFAULT_REGS
+
+    # ========================================================================
+    # String Helpers
+    # ========================================================================
 
     def _escape_asm(self, asm: str) -> str:
         """Escape assembly string for C string literal."""
@@ -272,6 +365,9 @@ class LatencyBenchmarkGenerator:
 
     def _generate_setup_code(self, instr: Instruction, is_store: bool = False) -> str:
         """Generate setup code to initialize registers/memory before benchmark."""
+        if instr.setup_code_override:
+            return instr.setup_code_override
+
         lat_type = instr.latency_type
 
         if lat_type == "atomic":
@@ -310,7 +406,7 @@ class LatencyBenchmarkGenerator:
             self.skipped_instructions.append(instr)
             return None
 
-        func_name = self._sanitize_name(instr.llvm_enum_name)
+        func_name = self._sanitize_name(instr.llvm_enum_name + instr.name_suffix)
         is_store = self._is_store_instruction(instr)
         setup_code = self._generate_setup_code(instr, is_store=is_store)
         needs_addr_setup = instr.latency_type in ["load", "store", "load_store", "atomic"]
@@ -371,14 +467,30 @@ static int bench_latency_{func_name}(uint32_t iterations, benchmark_result_t *re
         self.generated_benchmarks.append((instr, func_name))
         return func
 
+    def _get_category_enum(self, lat_type: str) -> str:
+        """Map latency type to benchmark category enum."""
+        category_map = {
+            "arithmetic": "BENCH_CAT_ARITHMETIC",
+            "multiply": "BENCH_CAT_MULTIPLY",
+            "load": "BENCH_CAT_MEMORY",
+            "store": "BENCH_CAT_MEMORY",
+            "load_store": "BENCH_CAT_MEMORY",
+            "branch": "BENCH_CAT_CONTROL",
+            "jump": "BENCH_CAT_CONTROL",
+            "atomic": "BENCH_CAT_ATOMIC",
+        }
+        return category_map.get(lat_type, "BENCH_CAT_OTHER")
+
     def generate_descriptor_entry(self, instr: Instruction, func_name: str) -> str:
         """Generate a benchmark descriptor entry."""
         lat_enum = self._get_latency_type_enum(instr.latency_type)
+        cat_enum = self._get_category_enum(instr.latency_type)
         escaped_asm = self._escape_asm(instr.test_asm)
         return f'''    {{
         .instruction_name = "{instr.llvm_enum_name}",
         .asm_syntax = "{escaped_asm}",
         .latency_type = {lat_enum},
         .bench_type = BENCH_TYPE_LATENCY,
+        .category = {cat_enum},
         .run_benchmark = bench_latency_{func_name}
     }}'''
