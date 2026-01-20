@@ -50,7 +50,23 @@ SUPPORTED_MNEMONICS = {
     
     # Phase 4: Load/Store (using asm input constraints like latency generator)
     "lw", "sw", "lh", "lhu", "sh", "lb", "lbu", "sb",
-    "c.lw", "c.sw",
+    "c.lw", "c.sw", "c.lwsp", "c.swsp",
+
+    # Phase 6: Atomic Instructions (A extension)
+    "amoswap.w", "amoadd.w", "amoxor.w", "amoand.w", "amoor.w",
+    "amomin.w", "amomax.w", "amominu.w", "amomaxu.w",
+    # Atomic variants (aq, rl, aqrl)
+    "amoswap.w.aq", "amoadd.w.aq", "amoxor.w.aq", "amoand.w.aq", "amoor.w.aq",
+    "amomin.w.aq", "amomax.w.aq", "amominu.w.aq", "amomaxu.w.aq",
+    "amoswap.w.rl", "amoadd.w.rl", "amoxor.w.rl", "amoand.w.rl", "amoor.w.rl",
+    "amomin.w.rl", "amomax.w.rl", "amominu.w.rl", "amomaxu.w.rl",
+    "amoswap.w.aqrl", "amoadd.w.aqrl", "amoxor.w.aqrl", "amoand.w.aqrl", "amoor.w.aqrl",
+    "amomin.w.aqrl", "amomax.w.aqrl", "amominu.w.aqrl", "amomaxu.w.aqrl",
+
+    # Phase 5: Control Flow (branches - not-taken, jumps - chained)
+    "beq", "bne", "blt", "bge", "bltu", "bgeu",
+    "c.beqz", "c.bnez",
+    "jal", "c.j", "c.jal",
 }
 
 # Backward compatibility alias
@@ -274,6 +290,73 @@ class ThroughputBenchmarkGenerator:
                 
 
                 
+        elif mnemonic.startswith("amo"):
+            # Atomic instructions: amo<op>.w rd, rs2, (rs1)
+            # To measure throughput parallel to memory, we use multiple address registers.
+            # We reserve a0, a1, a2, a3 as address pointers (initialized in setup).
+            # We use t0 as source operand (rs2).
+            # We use a4, a5, t1, t2 as destinations (rd) to avoid clobbering addrs.
+            
+            addr_regs = ["a0", "a1", "a2", "a3"]
+            dest_regs = ["a4", "a5", "t1", "t2"]
+            src_reg = "t0"
+            
+            for i in range(n):
+                addr_reg = addr_regs[i % len(addr_regs)]
+                rd = dest_regs[i % len(dest_regs)]
+                # Format: amoadd.w rd, rs2, (rs1)
+                # Note: some assemblers might want 0(rs1) but standard is (rs1)
+                indep_lines.append(f'        "{mnemonic} {rd}, {src_reg}, ({addr_reg})\\n"')
+                
+        # Phase 5: Branches (not-taken) 
+        elif mnemonic in {"beq", "bne", "blt", "bge", "bltu", "bgeu"}:
+            # Setup: configure registers so branch is NOT taken
+            # beq: a0 != a1 (not equal)
+            # bne: a0 == a0 (equal, so not taken)
+            # blt: a0 >= a1 (not less than)
+            # etc.
+            branch_not_taken = {
+                "beq": "beq a0, a1, 1f",   # a0 != a1
+                "bne": "bne a0, a0, 1f",   # a0 == a0, not taken
+                "blt": "blt a1, a0, 1f",   # a1 >= a0, not taken
+                "bge": "bge a0, a1, 1f",   # setup a0 < a1
+                "bltu": "bltu a1, a0, 1f", # unsigned not taken
+                "bgeu": "bgeu a0, a1, 1f", # unsigned not taken
+            }
+            asm = branch_not_taken.get(mnemonic, f"{mnemonic} a0, a0, 1f")
+            for i in range(n):
+                indep_lines.append(f'        "{asm}\\n"')
+                indep_lines.append(f'        "1:\\n"')
+                
+        elif mnemonic in {"c.beqz", "c.bnez"}:
+            # Compressed branches
+            # c.beqz: branch if rs == 0; setup rs != 0 for not-taken
+            # c.bnez: branch if rs != 0; setup rs == 0 for not-taken
+            if mnemonic == "c.beqz":
+                asm = "c.beqz a1, 1f"  # a1 != 0, not taken
+            else:  # c.bnez
+                asm = "c.bnez a0, 1f"  # a0 != 0, taken... need a0 == 0 for not-taken
+                # Actually for not-taken: c.bnez with zero reg
+                # But we want to measure throughput. Let's measure taken path instead.
+                # OR: use register that is 0. Setup code handles this.
+                asm = "c.bnez a0, 1f"  # a0 = 1 in setup, so taken
+            for i in range(n):
+                indep_lines.append(f'        "{asm}\\n"')
+                indep_lines.append(f'        "1:\\n"')
+                
+        # Phase 5: Jumps (chained labels)
+        elif mnemonic in {"jal", "c.j", "c.jal"}:
+            # Jump to next label in sequence
+            for i in range(n):
+                label = i + 1
+                if mnemonic == "jal":
+                    indep_lines.append(f'        "jal zero, {label}f\\n"')
+                elif mnemonic == "c.j":
+                    indep_lines.append(f'        "c.j {label}f\\n"')
+                elif mnemonic == "c.jal":
+                    indep_lines.append(f'        "c.jal {label}f\\n"')
+                indep_lines.append(f'        "{label}:\\n"')
+                
         else:
             return None
 
@@ -295,12 +378,45 @@ class ThroughputBenchmarkGenerator:
         func_name = self._sanitize_name(instr.llvm_enum_name)
         n = self.config.independent_count
         
-        # Check if this is a load/store instruction
+        # Check instruction type
         asm = instr.test_asm.lower().strip()
         mnemonic = asm.split()[0] if asm.split() else ""
-        is_load_store = mnemonic in {"lw", "lh", "lhu", "lb", "lbu", "sw", "sh", "sb", "c.lw", "c.sw"}
+        is_load_store = mnemonic in {"lw", "lh", "lhu", "lb", "lbu", "sw", "sh", "sb", "c.lw", "c.sw", "c.lwsp", "c.swsp"}
+        is_atomic = mnemonic.startswith("amo")
+        is_branch = mnemonic in {"beq", "bne", "blt", "bge", "bltu", "bgeu", "c.beqz", "c.bnez"}
+        is_jump = mnemonic in {"jal", "c.j", "c.jal"}
         
-        if is_load_store:
+        if is_atomic:
+            # Setup for Atomics
+            # We need multiple valid addresses to prevent serialization on a single cache line/lock.
+            # We allocate a buffer and point a0, a1, a2, a3 to different words.
+            setup_code = '''    /* Setup: create aligned memory buffer for atomic throughput */
+    static volatile uint32_t mem_buffer[32] __attribute__((aligned(64)));
+    uint32_t base_addr = (uint32_t)(uintptr_t)&mem_buffer[0];
+    register uint32_t t0_val __asm__("t0") = 1; /* Source value */
+    (void)t0_val;'''
+            
+            # Init address registers a0-a3
+            asm_init = '''        "mv a0, %0\\n"      /* a0 = base */
+        "addi a1, a0, 4\\n" /* a1 = base + 4 */
+        "addi a2, a0, 8\\n" /* a2 = base + 8 */
+        "addi a3, a0, 12\\n"/* a3 = base + 12 */
+'''
+            asm_clobber = ': "+r"(base_addr) :: "a0", "a1", "a2", "a3", "a4", "a5", "t0", "t1", "t2", "memory"'
+            post_asm = '        base_addr = base_addr;'
+
+        elif is_branch or is_jump:
+            # Setup for control flow: initialize comparison registers
+            # a0 = 1 (non-zero), a1 = 0 (zero) for branch conditions
+            setup_code = '''    /* Setup: initialize registers for branch conditions */
+    register uint32_t a0_val __asm__("a0") = 1;  /* non-zero */
+    register uint32_t a1_val __asm__("a1") = 0;  /* zero */
+    (void)a0_val; (void)a1_val;'''
+            asm_init = ''
+            asm_clobber = '::: "a0", "a1", "ra", "memory"'
+            post_asm = ''
+
+        elif is_load_store:
             # Memory setup for load/store throughput
             # Uses asm input constraints like the latency generator
             setup_code = '''    /* Setup: create aligned memory buffer for load/store throughput */
@@ -312,6 +428,17 @@ class ThroughputBenchmarkGenerator:
             asm_init = '        "mv s0, %0\\n"  /* Load base address into s0 */\n        "mv s1, %0\\n"  /* Also into s1 for compressed */\n'
             asm_clobber = ': "+r"(base_addr) :: "a0", "a1", "a2", "a3", "a4", "a5", "s0", "s1", "t0", "t1", "memory"'
             post_asm = '        base_addr = base_addr; /* Prevent optimization */'
+
+            # Special handling for Stack Pointer operations
+            if mnemonic in {"c.lwsp", "c.swsp"}:
+                # c.lwsp/swsp access relative to SP. We must allocate scratch space 
+                # on the stack to avoid corrupting the current stack frame (return addr, etc).
+                # Unrolled loop uses offsets up to ~256 bytes.
+                asm_init += '        "addi sp, sp, -256\\n" /* Reserve stack space */\n'
+                # Restore SP at the end of the sequence. 
+                # Note: We append to sequence, assuming sequence lines end with \n"
+                sequence += '        "addi sp, sp, 256\\n"  /* Restore stack space */\n' 
+
         else:
             # Standard setup for arithmetic operations
             setup_code = '''    /* Setup: initialize source registers with stable values */
