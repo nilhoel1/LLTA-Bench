@@ -30,11 +30,13 @@ try:
     from .common import BenchmarkConfig, Instruction, DEFAULT_INPUT, DEFAULT_OUTPUT
     from .latency_generator import LatencyBenchmarkGenerator
     from .throughput_generator import ThroughputBenchmarkGenerator
+    from .branch_predictor_generator import BranchPredictorBenchmarkGenerator, BranchPredictorConfig
 except ImportError:
     # Running as script directly
     from common import BenchmarkConfig, Instruction, DEFAULT_INPUT, DEFAULT_OUTPUT
     from latency_generator import LatencyBenchmarkGenerator
     from throughput_generator import ThroughputBenchmarkGenerator
+    from branch_predictor_generator import BranchPredictorBenchmarkGenerator, BranchPredictorConfig
 
 
 def load_instructions(input_path: str) -> List[dict]:
@@ -136,6 +138,90 @@ const size_t BENCHMARK_COUNT = sizeof(BENCHMARKS) / sizeof(BENCHMARKS[0]);
     return header
 
 
+def generate_branch_predictor_header(
+    functions: List[str],
+    descriptors: List[str],
+    config: 'BranchPredictorConfig'
+) -> str:
+    """Generate header file content for branch predictor experiments."""
+    timestamp = datetime.now().isoformat()
+    
+    all_functions = "\n".join(functions)
+    all_descriptors = ",\n".join(descriptors)
+    
+    header = f'''/**
+ * @file generated_benchmarks.h
+ * @brief Branch Predictor Direction Experiment for ESP32-C6
+ *
+ * Generated: {timestamp}
+ * Generator: generate_benchmarks.py --branch-predictor
+ *
+ * Experiments to determine if ESP32-C6 uses:
+ * - Static BTFN (Backward-Taken, Forward-Not-Taken) prediction
+ * - Dynamic BTB (Branch Target Buffer) with learning
+ *
+ * Expected Results (Static BTFN):
+ * - BRANCH_BACKWARD_TAKEN: ~1 cycle (correct prediction)
+ * - BRANCH_FORWARD_TAKEN: ~3 cycles (misprediction)
+ * - BRANCH_FORWARD_NOT_TAKEN: ~1 cycle (correct prediction)
+ * - BRANCH_BACKWARD_NOT_TAKEN: ~3 cycles (misprediction)
+ *
+ * Expected Results (Dynamic BTB):
+ * - All tests: ~3 cycles initially, ~1 cycle after warmup
+ */
+
+#ifndef GENERATED_BENCHMARKS_H
+#define GENERATED_BENCHMARKS_H
+
+#include "benchmark_interface.h"
+#include <limits.h>
+
+/*
+ * =============================================================================
+ * Benchmark Set Information
+ * =============================================================================
+ */
+
+const char *BENCHMARK_SET_NAME = "ESP32-C6 Branch Predictor Direction Experiment";
+
+/*
+ * =============================================================================
+ * Benchmark Configuration
+ * =============================================================================
+ */
+
+const benchmark_config_t BENCHMARK_CONFIG = {{
+    .warmup_iterations = {config.warmup_iterations},
+    .measurement_iterations = {config.measurement_iterations},
+    .repeat_count = {config.repeat_count},
+    .chain_length = {config.loop_iterations}
+}};
+
+/*
+ * =============================================================================
+ * Benchmark Function Implementations
+ * =============================================================================
+ */
+
+{all_functions}
+
+/*
+ * =============================================================================
+ * Benchmark Descriptors ({len(descriptors)} tests)
+ * =============================================================================
+ */
+
+const benchmark_descriptor_t BENCHMARKS[] = {{
+{all_descriptors}
+}};
+
+const size_t BENCHMARK_COUNT = sizeof(BENCHMARKS) / sizeof(BENCHMARKS[0]);
+
+#endif /* GENERATED_BENCHMARKS_H */
+'''
+    return header
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate latency and throughput benchmarks for ESP32-C6 RISC-V instructions"
@@ -196,8 +282,47 @@ def main():
         default="all",
         help="Filter by instruction category (default: all)"
     )
+    parser.add_argument(
+        "--branch-predictor",
+        action="store_true",
+        help="Generate branch predictor direction experiment benchmarks only"
+    )
+    parser.add_argument(
+        "--loop-iterations",
+        type=int,
+        default=100,
+        help="Branch iterations per measurement for branch predictor tests (default: 100)"
+    )
 
     args = parser.parse_args()
+
+    # Branch predictor mode: generate specialized experiments only
+    if args.branch_predictor:
+        print("=== Generating Branch Predictor Direction Experiment ===")
+        bp_config = BranchPredictorConfig(
+            warmup_iterations=args.warmup,
+            measurement_iterations=args.iterations,
+            repeat_count=args.repeats,
+            loop_iterations=args.loop_iterations
+        )
+        
+        bp_gen = BranchPredictorBenchmarkGenerator(bp_config)
+        bp_functions = bp_gen.generate_all_benchmarks()
+        bp_descriptors = bp_gen.generate_all_descriptors()
+        
+        # Generate header with branch predictor tests only
+        header_content = generate_branch_predictor_header(
+            bp_functions, bp_descriptors, bp_config
+        )
+        
+        with open(args.output, 'w') as f:
+            f.write(header_content)
+        
+        print(f"Generated {len(bp_gen.generated_benchmarks)} branch predictor tests:")
+        for name, _ in bp_gen.generated_benchmarks:
+            print(f"  - {name}")
+        print(f"Output written to: {args.output}")
+        return
 
     # Load instructions
     print(f"Loading instructions from: {args.input}")

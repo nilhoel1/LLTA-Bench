@@ -9,6 +9,6 @@ esp32c6_instructions.json
 *.json
 *.csv
 *.old
-*__pycache__*
+__pycache__
 *__init__.py
-*.pyc*
+*.pyc
