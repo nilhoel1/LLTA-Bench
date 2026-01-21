@@ -293,6 +293,11 @@ def main():
         default=100,
         help="Branch iterations per measurement for branch predictor tests (default: 100)"
     )
+    parser.add_argument(
+        "--cache",
+        action="store_true",
+        help="Generate cache latency benchmarks (SRAM, Flash Hit, Flash Miss)"
+    )
 
     args = parser.parse_args()
 
@@ -324,8 +329,92 @@ def main():
         print(f"Output written to: {args.output}")
         return
 
+    # Cache benchmarks mode
+    if args.cache:
+        print("=== Generating Cache Latency Benchmarks ===")
+        try:
+            from .cache_benchmarks import CacheBenchmarkConfig, CacheBenchmarkGenerator
+        except ImportError:
+            from cache_benchmarks import CacheBenchmarkConfig, CacheBenchmarkGenerator
+
+        cache_config = CacheBenchmarkConfig(
+            warmup_iterations=args.warmup,
+            measurement_iterations=args.iterations,
+            repeat_count=args.repeats
+        )
+        
+        cache_gen = CacheBenchmarkGenerator(cache_config)
+        c_code, descriptors = cache_gen.generate_all_benchmarks()
+        
+        timestamp = datetime.now().isoformat()
+        
+        header = f'''/**
+ * @file generated_benchmarks.h
+ * @brief Cache Latency Benchmarks for ESP32-C6
+ *
+ * Generated: {timestamp}
+ * Generator: generate_benchmarks.py --cache
+ */
+
+#ifndef GENERATED_BENCHMARKS_H
+#define GENERATED_BENCHMARKS_H
+
+#include "benchmark_interface.h"
+#include <limits.h>
+#include <stdlib.h> // For malloc/free
+
+/*
+ * =============================================================================
+ * Benchmark Set Information
+ * =============================================================================
+ */
+
+const char *BENCHMARK_SET_NAME = "ESP32-C6 Cache Latency Benchmarks";
+
+/*
+ * =============================================================================
+ * Benchmark Configuration
+ * =============================================================================
+ */
+
+const benchmark_config_t BENCHMARK_CONFIG = {{
+    .warmup_iterations = {cache_config.warmup_iterations},
+    .measurement_iterations = {cache_config.measurement_iterations},
+    .repeat_count = {cache_config.repeat_count},
+    .chain_length = 0 // Not relevant for cache tests
+}};
+
+/*
+ * =============================================================================
+ * Benchmark Function Implementations
+ * =============================================================================
+ */
+
+{c_code}
+
+/*
+ * =============================================================================
+ * Benchmark Descriptors
+ * =============================================================================
+ */
+
+const benchmark_descriptor_t BENCHMARKS[] = {{
+{",\n".join(descriptors)}
+}};
+
+const size_t BENCHMARK_COUNT = sizeof(BENCHMARKS) / sizeof(BENCHMARKS[0]);
+
+#endif /* GENERATED_BENCHMARKS_H */
+'''
+        with open(args.output, 'w') as f:
+            f.write(header)
+            
+        print(f"Generated {len(descriptors)} cache benchmarks to {args.output}")
+        return
+
     # Load instructions
     print(f"Loading instructions from: {args.input}")
+
     instructions_data = load_instructions(args.input)
     print(f"Loaded {len(instructions_data)} instructions")
 

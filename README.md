@@ -146,6 +146,17 @@ add a1, t0, t1   ; Cycle 1 (parallel execution)
 
 *Division is not pipelined, so throughput ≈ latency.
 
+### Cache & Instruction Fetch (Memory Subsystem)
+
+| Benchmark | Latency | CPI | Notes |
+| :--- | :--- | :--- | :--- |
+| **SRAM Access** | 3 cyc | - | Internal RAM baseline |
+| **Flash Cache Hit** | 4 cyc | - | Small RO data in cache |
+| **Flash Cache Miss** | ~347 cyc | - | Large RO data evicting cache |
+| **Unaligned Load** | 2 cyc | - | Hard 1-cycle penalty (vs 1 cyc aligned) |
+| **Fetch Linear** | - | 1.0 | 4KB NOP block (Flash) |
+| **Fetch Branchy** | - | 3.0 | 4KB Jump to next (Flash) |
+
 ### Detailed Results
 
 [View full detailed results in RESULTS.md](RESULTS.md)

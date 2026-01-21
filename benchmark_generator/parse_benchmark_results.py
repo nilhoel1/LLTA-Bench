@@ -101,15 +101,17 @@ def generate_summary(results: list) -> dict:
             }
         return type_stats
 
-    latency_subset = [r for r in successful if r.type == "latency"]
+    latency_subset = [r for r in successful if r.type == "latency" and not r.instruction.startswith("CACHE_")]
     throughput_subset = [r for r in successful if r.type == "throughput"]
+    cache_subset = [r for r in successful if r.instruction.startswith("CACHE_")]
     
     return {
         "total_benchmarks": len(results),
         "successful": len(successful),
         "failed": len(failed),
         "latency_stats": calc_stats(latency_subset),
-        "throughput_stats": calc_stats(throughput_subset)
+        "throughput_stats": calc_stats(throughput_subset),
+        "cache_stats": calc_stats(cache_subset)
     }
 
 
@@ -207,6 +209,13 @@ def main():
         print("\n--- Throughput (cycles/instr) ---")
         for lat_type, stats in summary['throughput_stats'].items():
             print(f"  {lat_type:<12}: {stats['count']:<3} instrs, avg={stats['avg_cycles']:>6.2f}")
+
+    if summary.get('cache_stats'):
+        print("\n--- Cache Latency (cycles) ---")
+        # Flatten the cache stats since they are grouped by latency_type which might just be 'load'
+        # Actually, let's print them individually or grouped
+        for lat_type, stats in summary['cache_stats'].items():
+            print(f"  {lat_type:<12}: {stats['count']:<3} tests,  avg={stats['avg_cycles']:>6.2f}")
 
     # Print table
     if not args.quiet:
