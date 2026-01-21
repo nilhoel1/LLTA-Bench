@@ -60,7 +60,7 @@ LLTA-Bench/
 python3 isa_extraction/extract_esp32_isa.py
 
 # 4. Generate benchmark header
-python3 benchmark_generator/generate_latency_benchmarks.py
+python3 benchmark_generator/generate_benchmarks.py
 
 # 5. Build and flash ESP32-C6 firmware
 cd esp32c6_benchmark
@@ -137,97 +137,18 @@ add a1, t0, t1   ; Cycle 1 (parallel execution)
 | **Multiply (low)** | MUL | 1 | 1 |
 | **Multiply (high)** | MULH, MULHSU, MULHU | 2 | 2 |
 | **Division** | DIV, DIVU, REM, REMU | 10 | 10* |
-| **Sign/Zero Extend** | SEXT.B, SEXT.H, ZEXT.H | 2 | 2 |
-| **Word Load** | LW, C.LW | 3 | - |
-| **Atomic (AMO)** | AMOADD.W, AMOSWAP.W, etc. | 6 | - |
-| **Branch (not-taken)** | BEQ, BNE | 1 | - |
-| **Branch (not-taken)** | BGE, BGEU, BLT, BLTU, C.BEQZ, C.BNEZ | 3-4 | - |
-| **Jump (direct)** | C.J, C.JAL, JAL | 2-3 | - |
+| **Sign/Zero Extend** | SEXT.B, SEXT.H, ZEXT.H.RV32, ZEXT.H.RV64 | 2 | 2 |
+| **Word Load** | LW, C.LW | 3 | 0-1 |
+| **Atomic (AMO)** | AMOADD.W, AMOSWAP.W, etc. | 6 | 6 |
+| **Branch (not-taken)** | BEQ, BNE | 1 | 1 |
+| **Branch (taken/complex)** | BGE, BGEU, BLT, BLTU, C.BEQZ, C.BNEZ | 1-3 | 1-2 |
+| **Jump (direct)** | C.J, C.JAL, JAL | 2-3 | 2 |
 
 *Division is not pipelined, so throughput ≈ latency.
 
 ### Detailed Results
 
-<details>
-<summary>Click to expand full results table (154 benchmarks)</summary>
-
-| Instruction | Assembly | Type | Latency | Throughput |
-|-------------|----------|------|---------|------------|
-| ADD | `add a0, a0, a0` | arithmetic | 1 | 1 |
-| ADDI | `addi a0, a0, 0` | arithmetic | 1 | 1 |
-| AMOADD_W | `amoadd.w a0, a0, (a0)` | atomic | 6 | - |
-| AMOAND_W | `amoand.w a0, a0, (a0)` | atomic | 6 | - |
-| AMOMAX_W | `amomax.w a0, a0, (a0)` | atomic | 6 | - |
-| AMOMAXU_W | `amomaxu.w a0, a0, (a0)` | atomic | 6 | - |
-| AMOMIN_W | `amomin.w a0, a0, (a0)` | atomic | 6 | - |
-| AMOMINU_W | `amominu.w a0, a0, (a0)` | atomic | 6 | - |
-| AMOOR_W | `amoor.w a0, a0, (a0)` | atomic | 6 | - |
-| AMOSWAP_W | `amoswap.w a0, a0, (a0)` | atomic | 6 | - |
-| AMOXOR_W | `amoxor.w a0, a0, (a0)` | atomic | 6 | - |
-| AND | `and a0, a0, a0` | arithmetic | 1 | 1 |
-| ANDI | `andi a0, a0, 0` | arithmetic | 1 | 1 |
-| AUIPC | `auipc a0, 0` | upper_imm | 1 | 1 |
-| BEQ | `beq a0, a0, 0` | branch | 1 | - |
-| BGE | `bge a0, a0, 0` | branch | 4 | - |
-| BGEU | `bgeu a0, a0, 0` | branch | 4 | - |
-| BLT | `blt a0, a0, 0` | branch | 4 | - |
-| BLTU | `bltu a0, a0, 0` | branch | 4 | - |
-| BNE | `bne a0, a0, 0` | branch | 1 | - |
-| C_ADD | `c.add a0, a0` | arithmetic | 1 | 1 |
-| C_ADDI | `c.addi a0, 1` | arithmetic | 1 | 1 |
-| C_AND | `c.and a0, a0` | arithmetic | 1 | 1 |
-| C_ANDI | `c.andi a0, 0` | arithmetic | 1 | 1 |
-| C_BEQZ | `c.beqz a0, 0` | branch | 3 | - |
-| C_BNEZ | `c.bnez a0, 0` | branch | 3 | - |
-| C_J | `c.j 0` | jump | 2 | - |
-| C_JAL | `c.jal 0` | jump | 2 | - |
-| C_LI | `c.li a0, 0` | arithmetic | 1 | 1 |
-| C_LW | `c.lw a0, 0(a0)` | load_store | 3 | - |
-| C_MV | `c.mv a0, a0` | arithmetic | 1 | 1 |
-| C_OR | `c.or a0, a0` | arithmetic | 1 | 1 |
-| C_SLLI | `c.slli a0, 1` | arithmetic | 1 | 1 |
-| C_SRAI | `c.srai a0, 1` | arithmetic | 1 | 1 |
-| C_SRLI | `c.srli a0, 1` | arithmetic | 1 | 1 |
-| C_SUB | `c.sub a0, a0` | arithmetic | 1 | 1 |
-| C_SW | `c.sw a0, 0(a0)` | store | 3 | - |
-| C_XOR | `c.xor a0, a0` | arithmetic | 1 | 1 |
-| DIV | `div a0, a0, a0` | multiply | 10 | 10 |
-| DIVU | `divu a0, a0, a0` | multiply | 10 | 10 |
-| JAL | `jal a0, 0` | jump | 3 | - |
-| LUI | `lui a0, 0` | upper_imm | 1 | 1 |
-| LW | `lw a0, 0(a0)` | load | 3 | - |
-| MUL | `mul a0, a0, a0` | multiply | 1 | 1 |
-| MULH | `mulh a0, a0, a0` | multiply | 2 | 2 |
-| MULHSU | `mulhsu a0, a0, a0` | multiply | 2 | 2 |
-| MULHU | `mulhu a0, a0, a0` | multiply | 2 | 2 |
-| OR | `or a0, a0, a0` | arithmetic | 1 | 1 |
-| ORI | `ori a0, a0, 0` | arithmetic | 1 | 1 |
-| REM | `rem a0, a0, a0` | multiply | 10 | 10 |
-| REMU | `remu a0, a0, a0` | multiply | 10 | 10 |
-| SB | `sb a0, 0(a0)` | store | 3 | - |
-| SEXT_B | `sext.b a0, a0` | bit_manip | 2 | 2 |
-| SEXT_H | `sext.h a0, a0` | bit_manip | 2 | 2 |
-| SH | `sh a0, 0(a0)` | store | 3 | - |
-| SLL | `sll a0, a0, a0` | arithmetic | 1 | 1 |
-| SLLI | `slli a0, a0, 1` | arithmetic | 1 | 1 |
-| SLT | `slt a0, a0, a0` | arithmetic | 1 | 1 |
-| SLTI | `slti a0, a0, 0` | arithmetic | 1 | 1 |
-| SLTIU | `sltiu a0, a0, 0` | arithmetic | 1 | 1 |
-| SLTU | `sltu a0, a0, a0` | arithmetic | 1 | 1 |
-| SRA | `sra a0, a0, a0` | arithmetic | 1 | 1 |
-| SRAI | `srai a0, a0, 1` | arithmetic | 1 | 1 |
-| SRL | `srl a0, a0, a0` | arithmetic | 1 | 1 |
-| SRLI | `srli a0, a0, 1` | arithmetic | 1 | 1 |
-| SUB | `sub a0, a0, a0` | arithmetic | 1 | 1 |
-| SW | `sw a0, 0(a0)` | store | 3 | - |
-| XOR | `xor a0, a0, a0` | arithmetic | 1 | 1 |
-| XORI | `xori a0, a0, 0` | arithmetic | 1 | 1 |
-| ZEXT_H | `zext.h a0, a0` | bit_manip | 2 | 2 |
-
-*Note: Atomic instructions with `.aq`, `.rl`, and `.aqrl` suffixes all have the same latency.*
-*Throughput `-` means not yet measured (control flow/memory instructions).*
-
-</details>
+[View full detailed results in RESULTS.md](RESULTS.md)
 
 ## License
 

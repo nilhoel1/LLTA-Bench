@@ -486,15 +486,43 @@ class ThroughputBenchmarkGenerator:
     register uint32_t a1_val __asm__("a1") = 0; // Zero
     (void)a0_val; (void)a1_val;"""
 
-        elif mnemonic in {"sb", "sh", "sw", "c.sw", "c.swsp"}:
-            # Store setup
-            setup_code = """    /* Setup: initialize memory and registers */
+        elif mnemonic in {"c.sw"}:
+            # Compressed store - uses s1 as base register (same as c.lw)
+            setup_code = """    /* Setup: initialize memory buffer for c.sw throughput */
     volatile uint32_t mem_buffer[32];
-    register uint32_t a0_val __asm__("a0") = (uint32_t)mem_buffer;
-    (void)a0_val;"""
+    uint32_t base_addr = (uint32_t)(uintptr_t)&mem_buffer[0];"""
+            asm_init = '        "mv s1, %0\\n"  /* Load base address into s1 */\n'
+            asm_clobber = ': "+r"(base_addr) :: "a0", "a1", "a2", "a3", "a4", "a5", "s0", "s1", "memory"'
+            post_asm = '        base_addr = base_addr; /* Prevent optimization */'
 
-        elif mnemonic in {"c.lwsp", "c.swsp"}:
-            # Stack pointer setup
+        elif mnemonic in {"sb", "sh", "sw"}:
+            # Regular stores - use s0 as base register
+            setup_code = """    /* Setup: initialize memory buffer for store throughput */
+    volatile uint32_t mem_buffer[32];
+    uint32_t base_addr = (uint32_t)(uintptr_t)&mem_buffer[0];"""
+            asm_init = '        "mv s0, %0\\n"  /* Load base address into s0 */\n'
+            asm_clobber = ': "+r"(base_addr) :: "a0", "a1", "a2", "a3", "a4", "a5", "s0", "s1", "memory"'
+            post_asm = '        base_addr = base_addr; /* Prevent optimization */'
+
+        elif mnemonic in {"c.swsp"}:
+            # Stack pointer store setup
+            setup_code = """    /* Setup: initialize stack pointer area */
+    /* Note: SP is modified in assembly, restored after */"""
+            asm_init = '        "addi sp, sp, -256\\n" /* Reserve stack space */\n'
+
+        elif mnemonic in {"lw", "lh", "lhu", "lb", "lbu", "c.lw"}:
+            # Load setup - need valid memory region, use input constraints to pass base address
+            setup_code = """    /* Setup: create memory buffer for load throughput */
+    static volatile uint32_t mem_buffer[32] __attribute__((aligned(64)));
+    for (int i = 0; i < 32; i++) mem_buffer[i] = 0x12345678;
+    uint32_t base_addr = (uint32_t)(uintptr_t)&mem_buffer[0];"""
+            # Initialize s1 inside asm to avoid clobber issues
+            asm_init = '        "mv s1, %0\\n"  /* Load base address into s1 */\n'
+            asm_clobber = ': "+r"(base_addr) :: "a0", "a1", "a2", "a3", "a4", "a5", "s0", "s1", "memory"'
+            post_asm = '        base_addr = base_addr; /* Prevent optimization */'
+
+        elif mnemonic in {"c.lwsp"}:
+            # Stack pointer load setup
             setup_code = """    /* Setup: initialize stack pointer area */
     /* Note: SP is modified in assembly, restored after */"""
             asm_init = '        "addi sp, sp, -256\\n" /* Reserve stack space */\n'
@@ -529,9 +557,11 @@ static int bench_throughput_{func_name}(uint32_t total_iterations, benchmark_res
             seq_code = sequences[count]
             current_asm_init = asm_init
             current_post_asm = post_asm
+            asm_teardown = ""
             
+            # For c.lwsp/c.swsp, restore stack inside the asm block
             if mnemonic in {"c.lwsp", "c.swsp"}:
-                current_post_asm += '        "addi sp, sp, 256\\n" /* Restore stack */\n'
+                asm_teardown = '        "addi sp, sp, 256\\n" /* Restore stack */\n'
 
             func_body += f"""
     /* Testing sequence length: {count} */
@@ -545,7 +575,7 @@ static int bench_throughput_{func_name}(uint32_t total_iterations, benchmark_res
             
             __asm__ volatile (
 {current_asm_init}{seq_code}
-                {asm_clobber}
+{asm_teardown}                {asm_clobber}
             );
             
             end = READ_CYCLE_COUNTER();

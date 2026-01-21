@@ -73,10 +73,10 @@ Total cycles ÷ 100 = latency per instruction
 
 ```bash
 # From the repository root - uses default paths
-python3 benchmark_generator/generate_latency_benchmarks.py
+python3 benchmark_generator/generate_benchmarks.py
 
 # Or with explicit options
-python3 benchmark_generator/generate_latency_benchmarks.py \
+python3 benchmark_generator/generate_benchmarks.py \
     --input isa_extraction/output/esp32c6_instructions.json \
     --output esp32c6_benchmark/main/generated_benchmarks.h \
     --chain-length 100 \
@@ -145,7 +145,7 @@ To add new types:
 
 To benchmark custom/vendor-specific instructions:
 1. Add them to `esp32c6_instructions.json`
-2. Implement special handling in `generate_latency_benchmarks.py` if needed
+2. Implement special handling in `generate_benchmarks.py` if needed
 3. Regenerate the header
 
 ## Measurement Accuracy

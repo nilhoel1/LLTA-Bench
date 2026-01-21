@@ -4,20 +4,24 @@ This folder contains Python tools for generating and parsing ESP32-C6 instructio
 
 ## Tools
 
-### `generate_latency_benchmarks.py`
+### `generate_benchmarks.py`
 
-Generates C header files containing latency benchmarks from extracted ISA definitions.
+Generates C header files containing latency and throughput benchmarks from extracted ISA definitions. This is the main entry point.
 
 **Usage:**
 
 ```bash
-# From project root - uses default paths
-python3 benchmark_generator/generate_latency_benchmarks.py
+# Generate ALL benchmarks (Latency + Throughput)
+python3 benchmark_generator/generate_benchmarks.py
 
-# Or with explicit paths
-python3 benchmark_generator/generate_latency_benchmarks.py \
-    --input isa_extraction/output/esp32c6_instructions.json \
-    --output esp32c6_benchmark/main/generated_benchmarks.h
+# Generate only Latency benchmarks
+python3 benchmark_generator/generate_benchmarks.py --latency-only
+
+# Generate only Throughput benchmarks
+python3 benchmark_generator/generate_benchmarks.py --throughput-only
+
+# Filter by instruction category
+python3 benchmark_generator/generate_benchmarks.py --category arithmetic
 ```
 
 **Options:**
@@ -28,7 +32,12 @@ python3 benchmark_generator/generate_latency_benchmarks.py \
 - `--warmup`: Number of warmup iterations (default: 100)
 - `--iterations`: Number of measurement iterations (default: 1000)
 - `--repeats`: Number of times to repeat measurement (default: 5)
-- `--chain-length`: Length of dependency chain (default: 100)
+- `--chain-length`: Length of dependency chain for latency (default: 100)
+- `--independent-count`: Number of independent instructions for throughput (default: 8)
+- `--latency-only`: Generate only latency benchmarks
+- `--throughput-only`: Generate only throughput benchmarks
+- `--category`: Filter by category (`all`, `arithmetic`, `multiply`, `memory`, `control`, `atomic`)
+
 
 ### `parse_benchmark_results.py`
 
@@ -60,7 +69,7 @@ python3 benchmark_generator/parse_benchmark_results.py \
 
 2. **Generate benchmarks**:
    ```bash
-   python3 benchmark_generator/generate_latency_benchmarks.py
+   python3 benchmark_generator/generate_benchmarks.py
    ```
 
 3. **Build and run** (from esp32c6_benchmark/):
