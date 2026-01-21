@@ -641,3 +641,87 @@ static int bench_throughput_{func_name}(uint32_t total_iterations, benchmark_res
         .category = {cat_enum},
         .run_benchmark = bench_throughput_{func_name}
     }}"""
+
+
+    def generate_structural_hazard_test(self) -> Tuple[str, str]:
+        """
+        Generates Structural Hazard Test (DIV + ADD).
+        Tests if the divider blocks the pipeline for independent instructions.
+        """
+        func_name = "structural_hazard_div_add"
+        
+        # Setup: Ensure source registers for DIV are non-zero to avoid div-by-zero
+        # DIV uses t0, t1, t2 usually. Let's be explicit in the asm.
+        # We will use:
+        #   div t0, t2, t3   (Long latency)
+        #   add t1, t4, t5   (Short latency, independent)
+        
+        setup_code = """    /* Setup: Initialize registers for DIV/ADD hazard test */
+    register uint32_t t2_val __asm__("t2") = 100;
+    register uint32_t t3_val __asm__("t3") = 7;
+    register uint32_t t4_val __asm__("t4") = 10;
+    register uint32_t t5_val __asm__("t5") = 20;
+    (void)t2_val; (void)t3_val; (void)t4_val; (void)t5_val;"""
+        
+        # Unroll 10 pairs
+        # Each pair: div (10 cyc) + add (1 cyc)
+        # If blocking: 11 cycles
+        # If non-blocking: 10 cycles
+        asm_loop_body = ""
+        for _ in range(10):
+            asm_loop_body += '        "div t0, t2, t3\\n"\n'
+            asm_loop_body += '        "add t1, t4, t5\\n"\n'
+
+        func_body = f"""
+/* Structural Hazard Benchmark: DIV (10 cyc) + ADD (1 cyc) */
+static int bench_{func_name}(uint32_t total_iterations, benchmark_result_t *result) {{
+    uint32_t start, end, elapsed;
+    uint64_t total_cycles = 0;
+    uint64_t min_cycles = UINT64_MAX;
+    
+{setup_code}
+
+    COMPILER_BARRIER();
+    
+    for (uint32_t rep = 0; rep < total_iterations; rep++) {{
+        COMPILER_BARRIER();
+        start = READ_CYCLE_COUNTER();
+        
+        __asm__ volatile (
+{asm_loop_body}
+            ::: "t0", "t1", "t2", "t3", "t4", "t5", "memory"
+        );
+        
+        end = READ_CYCLE_COUNTER();
+        COMPILER_BARRIER();
+        
+        elapsed = end - start;
+        if (elapsed < min_cycles) min_cycles = elapsed;
+        total_cycles += elapsed;
+    }}
+    
+    // Calculate cycles per PAIR
+    // We did 10 pairs per iteration.
+    result->min_cycles = (uint32_t)(min_cycles / 10);
+    result->avg_cycles = (uint32_t)((total_cycles / total_iterations) / 10);
+    result->max_cycles = 0;
+    result->total_iterations = total_iterations;
+    result->status = 0;
+    
+    return 0;
+}}
+"""
+        self.generated_benchmarks.append((None, func_name)) # None instr means manual entry
+        
+        # Generate descriptor manually since we don't have an Instruction object
+        descriptor = f"""    {{
+        .instruction_name = "STRUCTURAL_HAZARD_DIV_ADD",
+        .asm_syntax = "div + add (independent)",
+        .latency_type = LAT_TYPE_ARITHMETIC,
+        .bench_type = BENCH_TYPE_THROUGHPUT,
+        .category = BENCH_CAT_ARITHMETIC,
+        .run_benchmark = bench_{func_name}
+    }}"""
+        
+        return func_body, descriptor
+

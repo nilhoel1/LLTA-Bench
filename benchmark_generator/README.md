@@ -22,6 +22,18 @@ python3 benchmark_generator/generate_benchmarks.py --throughput-only
 
 # Filter by instruction category
 python3 benchmark_generator/generate_benchmarks.py --category arithmetic
+
+# Generate ONLY cache benchmarks
+python3 benchmark_generator/generate_benchmarks.py --cache
+
+# Generate ONLY branch predictor benchmarks
+python3 benchmark_generator/generate_benchmarks.py --branch-predictor
+
+# Generate ONLY structural hazard benchmarks
+python3 benchmark_generator/generate_benchmarks.py --hazards
+
+# Generate ONLY store buffer benchmarks
+python3 benchmark_generator/generate_benchmarks.py --store-buffer
 ```
 
 **Options:**
@@ -37,6 +49,10 @@ python3 benchmark_generator/generate_benchmarks.py --category arithmetic
 - `--latency-only`: Generate only latency benchmarks
 - `--throughput-only`: Generate only throughput benchmarks
 - `--category`: Filter by category (`all`, `arithmetic`, `multiply`, `memory`, `control`, `atomic`)
+- `--cache`: Generate only cache latency benchmarks
+- `--branch-predictor`: Generate only branch predictor tests
+- `--hazards`: Generate only structural hazard benchmarks
+- `--store-buffer`: Generate only store buffer benchmarks
 
 
 ### `parse_benchmark_results.py`

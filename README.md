@@ -18,7 +18,12 @@ LLTA-Bench/
 │
 ├── benchmark_generator/               # Benchmark generation tools
 │   ├── README.md                      # Generator documentation
-│   ├── generate_latency_benchmarks.py # Generates benchmark C headers
+│   ├── generate_benchmarks.py         # Main entry point for benchmark generation
+│   ├── latency_generator.py           # Latency benchmark generator
+│   ├── throughput_generator.py        # Throughput benchmark generator
+│   ├── cache_benchmarks.py            # Cache latency benchmarks
+│   ├── branch_predictor_generator.py  # Branch predictor tests
+│   ├── common.py                      # Shared utilities
 │   └── parse_benchmark_results.py     # Parses benchmark output
 │
 ├── esp32c6_benchmark/                 # ESP-IDF firmware project
@@ -126,7 +131,7 @@ add a1, t0, t1   ; Cycle 1 (parallel execution)
 
 ## Results Summary (ESP32-C6 @ 160MHz)
 
-**154 benchmarks (104 latency + 50 throughput)**
+**254 benchmarks (112 latency + 125 throughput + 9 cache + 5 branch predictor + 1 structural hazard + 2 store buffer)**
 
 | Category | Instructions | Latency | Throughput |
 |----------|-------------|---------|------------|
@@ -156,6 +161,43 @@ add a1, t0, t1   ; Cycle 1 (parallel execution)
 | **Unaligned Load** | 2 cyc | - | Hard 1-cycle penalty (vs 1 cyc aligned) |
 | **Fetch Linear** | - | 1.0 | 4KB NOP block (Flash) |
 | **Fetch Branchy** | - | 3.0 | 4KB Jump to next (Flash) |
+
+### Cache Replacement Policy Logic
+
+To determine the cache eviction policy (LRU vs Pseudo-LRU/Random), we use a **"5-pointer Thrash"** test on the 4-way set associative cache:
+
+1.  **Prime**: Access 4 lines ($P0 \to P1 \to P2 \to P3$) mapping to the same cache set. This fills the set. If the policy is LRU, $P0$ (accessed first) becomes the Least Recently Used line.
+2.  **Thrash**: Access a 5th line ($P4$) mapping to the same set. This forces the eviction of one line.
+3.  **Probe**: Measure the latency of accessing $P0$ again.
+    - **High Latency (~Miss)**: $P0$ was evicted. This strongly suggests an **LRU** policy (as $P0$ was the oldest).
+    - **Low Latency (~Hit)**: $P0$ survived. This suggests a **Random** or **Pseudo-LRU** policy.
+
+**Experimental Results**:
+- **Probe Latency**: Min 123 cycles, Avg 693 cycles.
+- **Baseline Hit**: 4 cycles.
+- **Conclusion**: The high latency (>> 4 cycles) and the fact that `min_cycles` is never a hit indicates that $P0$ is **consistently evicted**. This confirms the **LRU (Least Recently Used)** replacement policy.
+
+### Structural Hazards Logic
+
+To determine if the **Integer Divider** blocks the pipeline (preventing parallel execution of independent instructions), we measure a mixed sequence of **DIV** (10 cycles) and **ADD** (1 cycle):
+
+-   **Hypothesis A (Non-Blocking)**: DIV executes in background. Total = max(DIV, ADD) ≈ 10 cycles.
+-   **Hypothesis B (Blocking)**: DIV stalls the pipeline. Total = DIV + ADD ≈ 11 cycles.
+
+**Experimental Results**:
+-   **DIV + ADD Sequence**: 11 cycles.
+-   **Conclusion**: The divider on the ESP32-C6 is **BLOCKING**. It stalls the main pipeline until the division is complete, preventing instruction overlap.
+
+### Store Buffer Logic
+
+To characterize the **Store Buffer**, we perform two tests:
+
+1.  **Store Burst**: 100 consecutive `SW` instructions to a buffer.
+    -   **Result**: 104 cycles for 100 instructions (~1.04 CPI).
+    -   **Conclusion**: Validates that the ESP32-C6 has a **Write Buffer** capable of absorbing bursty stores at near 1 cycle/instruction rate, preventing pipeline stalls.
+2.  **Store-to-Load Forwarding**: Pairs of `SW` followed immediately by `LW` to the same address.
+    -   **Result**: 3 cycles per pair.
+    -   **Conclusion**: **Efficient Forwarding**. Data can be read back from the store buffer with minimal latency (~3 cycles total for the pair), significantly faster than waiting for a cache write-back and re-read.
 
 ### Detailed Results
 

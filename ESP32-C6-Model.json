@@ -1,0 +1,57 @@
+{
+  "meta": {
+    "target": "ESP32-C6",
+    "core": "RISC-V 32-bit (RV32IMAC)",
+    "clock_hz": 160000000,
+    "source": "Empirical LLTA-Bench Results",
+    "version": "1.1 (Final)"
+  },
+  "memory_hierarchy": {
+    "internal_sram": {
+      "address_range": ["0x40800000", "0x4087FFFF"],
+      "type": "Tightly Coupled (No Cache)",
+      "access_latency": 3,
+      "contention_model": "Fixed Priority (CPU > DMA - Assumed)"
+    },
+    "external_flash": {
+      "address_range": ["0x42000000", "0x42FFFFFF"],
+      "type": "Cached (SPI0)",
+      "cache_controller": {
+        "size": "32KB",
+        "associativity": 4,
+        "line_size": 32,
+        "replacement_policy": "LRU",
+        "hit_latency": 4,
+        "miss_penalty_cycles": 348,
+        "coherency": "Read-Only (Writes Fault)"
+      }
+    }
+  },
+  "instruction_timing": {
+    "alu_basic": { "cost": 1, "notes": "ADD, SUB, SHIFT, LOGIC" },
+    "mul_int":   { "cost": 1, "notes": "MUL (Low word)" },
+    "mul_high":  { "cost": 2, "notes": "MULH, MULHSU" },
+    "div_rem":   { "cost": 10, "notes": "Non-pipelined, blocks issue" },
+    "load":      { "cost": 3, "notes": "SRAM Load Latency" },
+    "store":     { "cost": 1, "notes": "Buffered throughput" },
+    "atomic":    { "cost": 6, "notes": "AMOADD, AMOSWAP, etc." },
+    "sext_zext": { "cost": 2, "notes": "Sign/Zero Extension" },
+    "nop":       { "cost": 1 }
+  },
+  "control_flow_costs": {
+    "description": "Static Branch Prediction (BTFN: Backward-Taken, Forward-Not-Taken)",
+    "branch_rules": [
+      { "type": "backward_taken", "cost": 2, "desc": "Loop continue (Predicted Correctly)" },
+      { "type": "forward_not_taken", "cost": 1, "desc": "If-Skip (Predicted Correctly)" },
+      { "type": "unconditional_jump", "cost": 3, "desc": "JAL/J (Always Flushes)" },
+      { "type": "mispredicted_taken", "cost": 4, "desc": "Forward Jump (If-Enter)" },
+      { "type": "mispredicted_not_taken", "cost": 4, "desc": "Loop Exit" }
+    ],
+    "default_wcet_branch_cost": 4
+  },
+  "penalties": {
+    "unaligned_load": 1,
+    "unaligned_store": 1,
+    "structural_hazard_div": "Serializes Pipeline (Cost = 10 + Next_Instr_Cost)"
+  }
+}

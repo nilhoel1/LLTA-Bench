@@ -494,3 +494,140 @@ static int bench_latency_{func_name}(uint32_t iterations, benchmark_result_t *re
         .category = {cat_enum},
         .run_benchmark = bench_latency_{func_name}
     }}'''
+
+
+    def generate_store_buffer_tests(self) -> Tuple[List[str], List[str]]:
+        """
+        Generates Store Buffer benchmarks:
+        1. SB_BURST_100_SW: Throughput of back-to-back stores to same address.
+        2. SB_FORWARDING_SW_LW: Latency of load immediately after store (forwarding).
+        """
+        c_functions = []
+        descriptors = []
+
+        # --- Test 1: Store Burst (100 SW) ---
+        func_name_burst = "sb_burst_100_sw"
+        # We need a safe memory location. We'll use a malloc'd buffer passed via setup.
+        setup_code_burst = """    /* Setup: Allocate buffer for store burst */
+    static uint32_t* burst_buffer = NULL;
+    if (!burst_buffer) burst_buffer = (uint32_t*)malloc(64); // Allocate once
+    uint32_t base_addr = (uint32_t)(uintptr_t)burst_buffer;
+    register uint32_t start_val __asm__("a0") = 0xAAAAAAAA;
+    (void)start_val;"""
+        
+        # 100 stores to 0(a1)
+        # Note: We use a1 as base pointer in asm to avoid clobbering others?
+        # Let's map base_addr to a1.
+        
+        asm_loop_burst = ""
+        for _ in range(100):
+            asm_loop_burst += '        "sw a0, 0(a1)\\n"\n'
+
+        func_burst = f"""
+/* Store Buffer Burst: 100 SW instructions */
+static int bench_{func_name_burst}(uint32_t total_iterations, benchmark_result_t *result) {{
+    uint32_t start, end, elapsed;
+    uint64_t total_cycles = 0;
+    
+{setup_code_burst}
+
+    COMPILER_BARRIER();
+    
+    for (uint32_t rep = 0; rep < total_iterations; rep++) {{
+        COMPILER_BARRIER();
+        start = READ_CYCLE_COUNTER();
+        
+        __asm__ volatile (
+            "mv a1, %0\\n" /* Load base address into a1 */
+{asm_loop_burst}
+            : "+r"(base_addr) :: "a0", "a1", "memory"
+        );
+        
+        end = READ_CYCLE_COUNTER();
+        COMPILER_BARRIER();
+        
+        total_cycles += (end - start);
+    }}
+    
+    // Result is Avg CPI x 100 or just raw cycles?
+    // Let's report Avg Cycles per Instruction * 100 for precision?
+    // Or just total average cycles per loop (100 instrs).
+    // Standard latency format: avg_cycles usually means per instruction for latency tests?
+    // But this is closer to throughput.
+    // Let's report Avg Cycles per 100 stores. User can divide by 100.
+    
+    result->min_cycles = 0;
+    result->max_cycles = 0;
+    result->avg_cycles = total_cycles / total_iterations; // Cycles per 100 SW
+    result->total_iterations = total_iterations;
+    result->status = 0;
+    return 0;
+}}
+"""
+        c_functions.append(func_burst)
+        descriptors.append(f"""    {{
+        .instruction_name = "SB_BURST_100_SW",
+        .asm_syntax = "sw a0, 0(a1) (x100)",
+        .latency_type = LAT_TYPE_STORE,
+        .bench_type = BENCH_TYPE_THROUGHPUT,
+        .category = BENCH_CAT_MEMORY,
+        .run_benchmark = bench_{func_name_burst}
+    }}""")
+
+        # --- Test 2: Store-to-Load Forwarding (50 pairs) ---
+        func_name_fwd = "sb_forwarding_sw_lw"
+        # 50 pairs of "sw a0, 0(a1); lw a0, 0(a1)"
+        
+        asm_loop_fwd = ""
+        for _ in range(50):
+            asm_loop_fwd += '        "sw a0, 0(a1)\\n"\n'
+            asm_loop_fwd += '        "lw a0, 0(a1)\\n"\n'
+
+        func_fwd = f"""
+/* Store Buffer Forwarding: 50 x (SW + LW) */
+static int bench_{func_name_fwd}(uint32_t total_iterations, benchmark_result_t *result) {{
+    uint32_t start, end, elapsed;
+    uint64_t total_cycles = 0;
+    
+{setup_code_burst}
+
+    COMPILER_BARRIER();
+    
+    for (uint32_t rep = 0; rep < total_iterations; rep++) {{
+        COMPILER_BARRIER();
+        start = READ_CYCLE_COUNTER();
+        
+        __asm__ volatile (
+            "mv a1, %0\\n" /* Load base address into a1 */
+{asm_loop_fwd}
+            : "+r"(base_addr) :: "a0", "a1", "memory"
+        );
+        
+        end = READ_CYCLE_COUNTER();
+        COMPILER_BARRIER();
+        
+        total_cycles += (end - start);
+    }}
+    
+    // Report cycles per PAIR (1 SW + 1 LW)
+    // total_cycles / iterations / 50 pairs
+    result->avg_cycles = total_cycles / (total_iterations * 50);
+    result->min_cycles = 0; 
+    result->max_cycles = 0;
+    result->total_iterations = total_iterations;
+    result->status = 0;
+    return 0;
+}}
+"""
+        c_functions.append(func_fwd)
+        descriptors.append(f"""    {{
+        .instruction_name = "SB_FORWARDING_SW_LW",
+        .asm_syntax = "sw + lw (same addr)",
+        .latency_type = LAT_TYPE_LOAD_STORE,
+        .bench_type = BENCH_TYPE_LATENCY,
+        .category = BENCH_CAT_MEMORY,
+        .run_benchmark = bench_{func_name_fwd}
+    }}""")
+
+        return c_functions, descriptors
+

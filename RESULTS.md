@@ -74,6 +74,15 @@
 | BLT | `blt a0, a0, 0` | branch | 1 | 1 |
 | BLTU | `bltu a0, a0, 0` | branch | 1 | 1 |
 | BNE | `bne a0, a0, 0` | branch | 1 | 1 |
+| BRANCH_BACKWARD_NOT_TAKEN | `Branch Predictor Test` | branch | 4 | - |
+| BRANCH_BACKWARD_TAKEN | `Branch Predictor Test` | branch | 2 | - |
+| BRANCH_FORWARD_NOT_TAKEN | `Branch Predictor Test` | branch | 1 | - |
+| BRANCH_FORWARD_TAKEN | `Branch Predictor Test` | branch | 4 | - |
+| BRANCH_WARMUP_DETECTION | `Branch Predictor Test` | branch | 5 | - |
+| CACHE_FLASH_HIT | `Pointer Chasing` | load | 4 | - |
+| CACHE_FLASH_MISS | `Pointer Chasing` | load | 347 | - |
+| CACHE_REPLACEMENT_LRU | `Pointer Chasing` | load | 123 | - |
+| CACHE_SRAM | `Pointer Chasing` | load | 3 | - |
 | C_ADD | `c.add a0, a0` | arithmetic | 1 | 1 |
 | C_ADDI | `c.addi a0, 1` | arithmetic | 1 | 1 |
 | C_ADDI_HINT_IMM_ZERO | `c.addi a0, 0` | arithmetic | 1 | 1 |
@@ -105,6 +114,8 @@
 | C_XOR | `c.xor a0, a0` | arithmetic | 1 | 1 |
 | DIV | `div a0, a0, a0` | multiply | 10 | 10 |
 | DIVU | `divu a0, a0, a0` | multiply | 10 | 10 |
+| FETCH_BRANCHY_1000_JMP | `Instruction Fetch` | load | 3001 | - |
+| FETCH_LINEAR_1000_NOP | `Instruction Fetch` | load | 1001 | - |
 | JAL | `jal a0, 0` | jump | 3 | 2 |
 | LB | `lb a0, 0(a0)` | load | - | 0 |
 | LBU | `lbu a0, 0(a0)` | load | - | 0 |
@@ -123,6 +134,8 @@
 | REM | `rem a0, a0, a0` | multiply | 10 | 10 |
 | REMU | `remu a0, a0, a0` | multiply | 10 | 10 |
 | SB | `sb a0, 0(a0)` | store | 3 | 1 |
+| SB_BURST_100_SW | `sw a0, 0(a1) (x100)` | store | - | 0 |
+| SB_FORWARDING_SW_LW | `sw + lw (same addr)` | load_store | 0 | - |
 | SEXT_B | `sext.b a0, a0` | unknown | 2 | 2 |
 | SEXT_H | `sext.h a0, a0` | unknown | 2 | 2 |
 | SH | `sh a0, 0(a0)` | store | 3 | 1 |
@@ -137,9 +150,13 @@
 | SRAI | `srai a0, a0, 1` | arithmetic | 1 | 1 |
 | SRL | `srl a0, a0, a0` | arithmetic | 1 | 1 |
 | SRLI | `srli a0, a0, 1` | arithmetic | 1 | 1 |
+| STRUCTURAL_HAZARD_DIV_ADD | `div + add (independent)` | arithmetic | - | 11 |
 | SUB | `sub a0, a0, a0` | arithmetic | 1 | 1 |
 | SW | `sw a0, 0(a0)` | store | 3 | 1 |
 | SW_INX | `sw a0, 0(a0)` | store | 3 | 1 |
+| UNALIGNED_LOAD_0_ALIGNED | `Unaligned Load` | load | 1 | - |
+| UNALIGNED_LOAD_1 | `Unaligned Load` | load | 2 | - |
+| UNALIGNED_LOAD_31_CROSS_LINE | `Unaligned Load` | load | 2 | - |
 | XOR | `xor a0, a0, a0` | arithmetic | 1 | 1 |
 | XORI | `xori a0, a0, 0` | arithmetic | 1 | 1 |
 | ZEXT_H_RV32 | `zext.h a0, a0` | unknown | 2 | 2 |

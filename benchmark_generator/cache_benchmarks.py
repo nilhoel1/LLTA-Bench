@@ -595,6 +595,114 @@ static int bench_{func_name}(uint32_t total_iterations, benchmark_result_t *resu
         .run_benchmark = bench_{func_name}
     }}"""
 
+
+    def _generate_thrash_array(self, name: str, size: int) -> str:
+        """Helper to generate a large const array in .rodata for thrashing."""
+        lines = []
+        lines.append(f"/* {name} Data: {size/1024} KB */")
+        lines.append(f"static const uint8_t {name}[{size}] __attribute__((aligned(32))) = {{")
+        # We don't need specific values, just presence. 
+        # But to avoid optimization, we can put some non-zero values.
+        # Generating 64K lines in python might be slow/verbose.
+        # Let's just use a shortcut if the C compiler supports it, or generate 0s.
+        # Actually, for 64KB, fully printing it is bad.
+        # Use GCC range initialization if possible? 
+        # " [0 ... size-1] = 0xFF " is a GCC extension.
+        lines.append(f"    [0 ... {size - 1}] = 0xAA,")
+        lines.append("};")
+        return "\n".join(lines)
+
+    def generate_cache_replacement_test(self) -> Tuple[str, str]:
+        """
+        Generates Cache Replacement Policy (LRU vs Random) test.
+        Uses 5 pointers with 8KB stride (assuming 4-way, 32KB cache).
+        Sequence: Prime (P0->P1->P2->P3) -> Thrash (P4) -> Probe (P0).
+        """
+        array_name = "flash_thrash_array"
+        array_size = 64 * 1024 # 64KB
+        func_name = "cache_replacement_lru"
+        
+        array_def = self._generate_thrash_array(array_name, array_size)
+        
+        func = f"""
+/*
+ * Cache Replacement Policy Benchmark (LRU Detection)
+ * Tests if the cache uses LRU by filling a set with 4 lines (P0..P3),
+ * accessing a 5th line (P4) to force eviction, and probing P0.
+ * 
+ * Assumptions:
+ * - Block size: 32 bytes (Standard for ESP32)
+ * - Associativity: 4-way
+ * - Cache Size: 32KB (implies 8KB Way size)
+ * - Stride: 8KB to alias to the same Set Index.
+ */
+static int bench_{func_name}(uint32_t total_iterations, benchmark_result_t *result) {{
+    uint32_t start, end;
+    uint64_t total_cycles = 0;
+    uint64_t min_cycles = UINT64_MAX;
+    
+    // Volatile pointers to prevent compiler reordering/optimization
+    volatile uint8_t *p0 = (volatile uint8_t *)&{array_name}[0];
+    volatile uint8_t *p1 = (volatile uint8_t *)&{array_name}[8192];  // +8KB
+    volatile uint8_t *p2 = (volatile uint8_t *)&{array_name}[16384]; // +16KB
+    volatile uint8_t *p3 = (volatile uint8_t *)&{array_name}[24576]; // +24KB
+    volatile uint8_t *p4 = (volatile uint8_t *)&{array_name}[32768]; // +32KB
+    
+    // Warmup the instructions themselves? 
+    // Just run the sequence a few times.
+    for (int i = 0; i < {self.config.warmup_iterations}; i++) {{
+        *p0; *p1; *p2; *p3; *p4;
+    }}
+    
+    COMPILER_BARRIER();
+    
+    for (uint32_t rep = 0; rep < total_iterations; rep++) {{
+        // 1. Prime the set
+        // Order: P0 -> P1 -> P2 -> P3
+        // If LRU stack updates on access:
+        // Access P0: Stack=[P0, ?, ?, ?]
+        // Access P1: Stack=[P1, P0, ?, ?]
+        // Access P2: Stack=[P2, P1, P0, ?]
+        // Access P3: Stack=[P3, P2, P1, P0]  <- P0 is LRU (Bottom)
+        
+        COMPILER_BARRIER();
+        *p0; 
+        *p1; 
+        *p2; 
+        *p3;
+        COMPILER_BARRIER();
+        
+        // 2. Thrash (Evict one line)
+        // Access P4. Maps to same set.
+        // If LRU: Evicts bottom of stack (P0). Stack=[P4, P3, P2, P1]
+        // If Random: 25% chance to evict P0.
+        *p4;
+        COMPILER_BARRIER();
+        
+        // 3. Probe P0
+        start = READ_CYCLE_COUNTER();
+        *p0;
+        end = READ_CYCLE_COUNTER();
+        COMPILER_BARRIER();
+        
+        uint32_t elapsed = end - start;
+        if (elapsed < min_cycles) min_cycles = elapsed;
+        total_cycles += elapsed;
+    }}
+    
+    // We are measuring LATENCY of P0 probe.
+    result->min_cycles = (uint32_t)min_cycles;
+    result->avg_cycles = (uint32_t)(total_cycles / total_iterations);
+    result->max_cycles = 0;
+    result->total_iterations = total_iterations;
+    result->status = 0;
+    
+    return 0;
+}}
+"""
+        self.generated_benchmarks.append(("CACHE_REPLACEMENT_LRU", func_name))
+        return func, array_def
+
     def generate_all_benchmarks(self) -> Tuple[str, List[str]]:
         """
         Matches standard generator interface roughly.
@@ -627,6 +735,11 @@ static int bench_{func_name}(uint32_t total_iterations, benchmark_result_t *resu
         # 6. Instruction Fetch (Task A)
         c_code_parts.append(self.generate_fetch_linear_test())
         c_code_parts.append(self.generate_fetch_branchy_test())
+        
+        # 7. Cache Replacement Policy (Task C)
+        lru_func, lru_array = self.generate_cache_replacement_test()
+        c_code_parts.append(lru_array)
+        c_code_parts.append(lru_func)
         
         # Generate descriptors
         for name, func_name in self.generated_benchmarks:

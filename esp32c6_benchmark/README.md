@@ -129,14 +129,18 @@ The output includes two formats:
 
 ## Extending the Framework
 
+### Current Benchmark Types
+
+The framework includes the following benchmark categories:
+
+1. **Latency**: Measures cycles per instruction using dependency chains (112 benchmarks)
+2. **Throughput**: Measures instructions per cycle using independent sequences (125 benchmarks)
+3. **Cache Latency**: SRAM, Flash Hit/Miss, Unaligned Load, Instruction Fetch (9 benchmarks)
+4. **Branch Predictor**: Backward/Forward taken/not-taken, warmup detection (5 benchmarks)
+5. **Structural Hazards**: DIV+ADD overlap test (1 benchmark)
+6. **Store Buffer**: Burst throughput and Store-to-Load forwarding (2 benchmarks)
+
 ### Adding New Benchmark Types
-
-The framework is designed to support future benchmark types:
-
-1. **Throughput**: Measure how many instructions can execute per cycle (independent instructions)
-2. **Port Usage**: Not directly applicable to simple RISC-V cores like ESP32-C6
-
-To add new types:
 1. Add new enum values to `benchmark_type_t` in `benchmark_interface.h`
 2. Create new generator functions in the Python script
 3. The `main.c` runner will automatically handle them

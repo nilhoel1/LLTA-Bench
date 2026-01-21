@@ -298,6 +298,16 @@ def main():
         action="store_true",
         help="Generate cache latency benchmarks (SRAM, Flash Hit, Flash Miss)"
     )
+    parser.add_argument(
+        "--hazards",
+        action="store_true",
+        help="Generate structural hazard benchmarks (e.g. DIV+ADD)"
+    )
+    parser.add_argument(
+        "--store-buffer",
+        action="store_true",
+        help="Generate Store Buffer benchmarks (burst, forwarding)"
+    )
 
     args = parser.parse_args()
 
@@ -410,6 +420,73 @@ const size_t BENCHMARK_COUNT = sizeof(BENCHMARKS) / sizeof(BENCHMARKS[0]);
             f.write(header)
             
         print(f"Generated {len(descriptors)} cache benchmarks to {args.output}")
+        return
+
+
+    # Structural Hazards mode
+    if args.hazards:
+        print("=== Generating Structural Hazard Benchmarks ===")
+        # We reuse the standard throughput generator but only call the hazards method
+        # and standard throughput config
+        config = BenchmarkConfig(
+            warmup_iterations=args.warmup,
+            measurement_iterations=args.iterations,
+            repeat_count=args.repeats,
+            independent_count=args.independent_count
+        )
+        
+        tput_gen = ThroughputBenchmarkGenerator(config)
+        
+        # Only generate hazards
+        c_func, descriptor = tput_gen.generate_structural_hazard_test()
+        
+        c_functions = [c_func]
+        descriptors = [descriptor]
+        
+        # Generate Header
+        header_content = generate_header_content(
+            [], # No latency metrics
+            c_functions,
+            [], # No latency descriptors
+            descriptors,
+            config
+        )
+        
+        with open(args.output, 'w') as f:
+            f.write(header_content)
+            
+        print(f"Generated 1 structural hazard benchmark to {args.output}")
+        return
+
+    # Store Buffer mode
+    if args.store_buffer:
+        print("=== Generating Store Buffer Benchmarks ===")
+        # LatencyBenchmarkGenerator is already imported at module level
+
+        config = BenchmarkConfig(
+            warmup_iterations=args.warmup,
+            measurement_iterations=args.iterations,
+            repeat_count=args.repeats
+        )
+        
+        lat_gen = LatencyBenchmarkGenerator(config)
+        c_functions, descriptors = lat_gen.generate_store_buffer_tests()
+        
+        # Generate Header
+        # We can reuse generate_header_content but we need to pass C functions list
+        # We'll pass empty lists for instructions we aren't testing
+        header_content = generate_header_content(
+            [], # No latency metrics
+            c_functions,
+            [], # No latency descriptors
+            descriptors,
+            config
+        )
+        
+        with open(args.output, 'w') as f:
+            f.write(header_content)
+        
+        print(f"Generated {len(descriptors)} store buffer benchmarks to {args.output}")
         return
 
     # Load instructions
@@ -542,12 +619,63 @@ const size_t BENCHMARK_COUNT = sizeof(BENCHMARKS) / sizeof(BENCHMARKS[0]);
         
         print(f"  Generated: {len(tput_gen.generated_benchmarks)} throughput benchmarks")
 
+    # --- Additional Specialized Benchmarks (included by default) ---
+    additional_functions = []
+    additional_descriptors = []
+
+    # Cache benchmarks
+    print("\n=== Generating Cache Benchmarks ===")
+    try:
+        from .cache_benchmarks import CacheBenchmarkConfig, CacheBenchmarkGenerator
+    except ImportError:
+        from cache_benchmarks import CacheBenchmarkConfig, CacheBenchmarkGenerator
+
+    cache_config = CacheBenchmarkConfig(
+        warmup_iterations=args.warmup,
+        measurement_iterations=args.iterations,
+        repeat_count=args.repeats
+    )
+    cache_gen = CacheBenchmarkGenerator(cache_config)
+    cache_code, cache_descriptors = cache_gen.generate_all_benchmarks()
+    additional_functions.append(cache_code)
+    additional_descriptors.extend(cache_descriptors)
+    print(f"  Generated: {len(cache_descriptors)} cache benchmarks")
+
+    # Branch Predictor benchmarks
+    print("\n=== Generating Branch Predictor Benchmarks ===")
+    bp_config = BranchPredictorConfig(
+        warmup_iterations=args.warmup,
+        measurement_iterations=args.iterations,
+        repeat_count=args.repeats,
+        loop_iterations=args.loop_iterations
+    )
+    bp_gen = BranchPredictorBenchmarkGenerator(bp_config)
+    bp_functions = bp_gen.generate_all_benchmarks()
+    bp_descriptors = bp_gen.generate_all_descriptors()
+    additional_functions.extend(bp_functions)
+    additional_descriptors.extend(bp_descriptors)
+    print(f"  Generated: {len(bp_gen.generated_benchmarks)} branch predictor benchmarks")
+
+    # Structural Hazards benchmark
+    print("\n=== Generating Structural Hazard Benchmarks ===")
+    hazard_func, hazard_desc = tput_gen.generate_structural_hazard_test()
+    additional_functions.append(hazard_func)
+    additional_descriptors.append(hazard_desc)
+    print(f"  Generated: 1 structural hazard benchmark")
+
+    # Store Buffer benchmarks
+    print("\n=== Generating Store Buffer Benchmarks ===")
+    sb_functions, sb_descriptors = lat_gen.generate_store_buffer_tests()
+    additional_functions.extend(sb_functions)
+    additional_descriptors.extend(sb_descriptors)
+    print(f"  Generated: {len(sb_descriptors)} store buffer benchmarks")
+
     # Generate header file
     header_content = generate_header_content(
         latency_functions,
-        throughput_functions,
+        throughput_functions + additional_functions,
         latency_descriptors,
-        throughput_descriptors,
+        throughput_descriptors + additional_descriptors,
         config
     )
 
@@ -555,10 +683,15 @@ const size_t BENCHMARK_COUNT = sizeof(BENCHMARKS) / sizeof(BENCHMARKS[0]);
     with open(args.output, 'w') as f:
         f.write(header_content)
 
+    total_benchmarks = len(latency_descriptors) + len(throughput_descriptors) + len(additional_descriptors)
     print(f"\n=== Summary ===")
-    print(f"Total benchmarks: {len(latency_descriptors) + len(throughput_descriptors)}")
+    print(f"Total benchmarks: {total_benchmarks}")
     print(f"  Latency: {len(latency_descriptors)}")
     print(f"  Throughput: {len(throughput_descriptors)}")
+    print(f"  Cache: {len(cache_descriptors)}")
+    print(f"  Branch Predictor: {len(bp_gen.generated_benchmarks)}")
+    print(f"  Structural Hazards: 1")
+    print(f"  Store Buffer: {len(sb_descriptors)}")
     print(f"Output written to: {args.output}")
 
 
